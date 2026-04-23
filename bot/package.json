@@ -18,8 +18,8 @@
   "author": "DeFi Developer",
   "license": "MIT",
   "dependencies": {
-    "ethers": "^5.7.0",
-    "dotenv": "^16.0.3"
+    "dotenv": "^16.0.3",
+    "ethers": "^6.16.0"
   },
   "devDependencies": {
     "nodemon": "^2.0.20"

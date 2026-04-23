@@ -2,25 +2,35 @@ const { ethers } = require("hardhat");
 
 async function main() {
   const [deployer] = await ethers.getSigners();
-  console.log("Deploying contracts with the account:", deployer.address);
+  console.log("Deploying with account:", deployer.address);
 
-  // Polygon Mainnet addresses (update for Mumbai testnet as needed)
-  // QuickSwap addresses
+  const balance = await ethers.provider.getBalance(deployer.address);
+  console.log("Account balance:", ethers.formatEther(balance), "MATIC");
+
+  if (balance < ethers.parseEther("0.1")) {
+    console.warn("⚠️  Low balance! Need at least 0.1 MATIC for deployment.");
+  }
+
+  // ============ POLYGON MAINNET ADDRESSES ============
   const FACTORY = "0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32"; // QuickSwap Factory
   const ROUTER = "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff"; // QuickSwap Router
   const USDC = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"; // USDC on Polygon
   const WMATIC = "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270"; // WMATIC
   const WETH = "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619"; // WETH on Polygon
   const DAI = "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063"; // DAI on Polygon
-  
-  // Chainlink oracle addresses (update for Mumbai testnet as needed)
-  const CHAINLINK_ORACLE = "0xfE4A8cc5b5B2366C1B58Bea3858e81843581b2F7"; // USDC/USD on Polygon
-  
-  // Fee recipient (replace with actual multisig)
+
+  // Chainlink Oracles on Polygon
+  const ORACLE_USDC = "0xfE4A8cc5b5B2366C1B58Bea3858e81843581b2F7"; // USDC/USD
+  const ORACLE_WETH = "0xF9680D99D6C9589e2a93a78A04A279e509205945"; // ETH/USD
+  const ORACLE_DAI = "0x4746DeC9e833A82EC7C2C1356372CcF2cfcD2F3D"; // DAI/USD
+  const ORACLE_MATIC = "0xAB594600376Ec9fD91F8e885dADF0CE036862dE0"; // MATIC/USD
+
+  // Fee recipient = your deployer wallet (change to multisig later)
   const FEE_RECIPIENT = deployer.address;
 
-  console.log("Deploying FlashLoanPolygon for Polygon...");
-  
+  // ============ DEPLOY ============
+  console.log("\nDeploying FlashLoanPolygon...");
+
   const FlashLoanPolygon = await ethers.getContractFactory("FlashLoanPolygon");
   const flashLoan = await FlashLoanPolygon.deploy(
     FACTORY,
@@ -29,76 +39,63 @@ async function main() {
     WMATIC,
     WETH,
     DAI,
-    CHAINLINK_ORACLE,
+    ORACLE_USDC,   // default oracle for USDC set in constructor
     FEE_RECIPIENT
   );
 
-  await flashLoan.deployed();
+  // ✅ ethers v6 syntax
+  await flashLoan.waitForDeployment();
+  const contractAddress = await flashLoan.getAddress();
 
-  console.log("FlashLoanPolygon deployed to:", flashLoan.address);
-  console.log("Deployment completed successfully!");
-  
-  // Verify deployment
+  console.log("✅ FlashLoanPolygon deployed to:", contractAddress);
+
+  // ============ SET ORACLES FOR OTHER TOKENS ============
+  console.log("\nSetting oracles for WETH, DAI, WMATIC...");
+
+  const tx1 = await flashLoan.setTokenOracle(WETH, ORACLE_WETH);
+  await tx1.wait();
+  console.log("✅ WETH oracle set");
+
+  const tx2 = await flashLoan.setTokenOracle(DAI, ORACLE_DAI);
+  await tx2.wait();
+  console.log("✅ DAI oracle set");
+
+  const tx3 = await flashLoan.setTokenOracle(WMATIC, ORACLE_MATIC);
+  await tx3.wait();
+  console.log("✅ WMATIC oracle set");
+
+  // ============ VERIFY DEPLOYMENT ============
   console.log("\n=== Deployment Verification ===");
-  console.log("Factory:", await flashLoan.factory());
-  console.log("Router:", await flashLoan.router());
-  console.log("USDC:", await flashLoan.USDC());
-  console.log("WMATIC:", await flashLoan.WMATIC());
-  console.log("WETH:", await flashLoan.WETH());
-  console.log("DAI:", await flashLoan.DAI());
-  console.log("Chainlink Oracle:", await flashLoan.chainlinkOracle());
-  console.log("Fee Recipient:", await flashLoan.feeRecipient());
-  console.log("Owner:", await flashLoan.owner());
-  
-  // Check initial state
+  console.log("Factory  :", await flashLoan.factory());
+  console.log("Router   :", await flashLoan.router());
+  console.log("USDC     :", await flashLoan.USDC());
+  console.log("WMATIC   :", await flashLoan.WMATIC());
+  console.log("WETH     :", await flashLoan.WETH());
+  console.log("DAI      :", await flashLoan.DAI());
+  console.log("Fee Recip:", await flashLoan.feeRecipient());
+  console.log("Owner    :", await flashLoan.owner());
+
   console.log("\n=== Initial State ===");
-  console.log("Protocol Fee (bps):", await flashLoan.protocolFeeBps());
+  console.log("Protocol Fee (bps)    :", (await flashLoan.protocolFeeBps()).toString());
   console.log("Circuit Breaker Active:", await flashLoan.circuitBreakerActive());
-  console.log("Daily Volume Used:", (await flashLoan.dailyVolumeUsed()).toString());
-  console.log("Insurance Reserve Balance:", (await flashLoan.insuranceReserveBalance()).toString());
-  
-  // Check risk configs
-  console.log("\n=== Risk Configurations ===");
-  const usdcConfig = await flashLoan.getAssetRiskConfig(USDC);
-  console.log("USDC Config:", {
-    maxLoanAmount: usdcConfig.maxLoanAmount.toString(),
-    ltvRatio: usdcConfig.ltvRatio.toString(),
-    riskScore: usdcConfig.riskScore.toString(),
-    isActive: usdcConfig.isActive
-  });
-  
-  const wethConfig = await flashLoan.getAssetRiskConfig(WETH);
-  console.log("WETH Config:", {
-    maxLoanAmount: wethConfig.maxLoanAmount.toString(),
-    ltvRatio: wethConfig.ltvRatio.toString(),
-    riskScore: wethConfig.riskScore.toString(),
-    isActive: wethConfig.isActive
-  });
-  
-  const daiConfig = await flashLoan.getAssetRiskConfig(DAI);
-  console.log("DAI Config:", {
-    maxLoanAmount: daiConfig.maxLoanAmount.toString(),
-    ltvRatio: daiConfig.ltvRatio.toString(),
-    riskScore: daiConfig.riskScore.toString(),
-    isActive: daiConfig.isActive
-  });
-  
-  console.log("\n=== Deployment Summary ===");
-  console.log("✅ FlashLoanPolygon deployed successfully for Polygon");
-  console.log("✅ All security features enabled");
-  console.log("✅ Risk management configured");
+
+  const [used, max, resetTime] = await flashLoan.getDailyVolumeUsage();
+  console.log("Daily Volume Used     :", used.toString());
+  console.log("Daily Volume Max      :", max.toString());
+
+  // ============ SUMMARY ============
+  console.log("\n=== Summary ===");
+  console.log("✅ Contract deployed:", contractAddress);
+  console.log("✅ All 4 oracles set (USDC, WETH, DAI, WMATIC)");
+  console.log("✅ Risk configs initialized");
   console.log("✅ Circuit breaker ready");
-  console.log("✅ Oracle integration active");
-  console.log("✅ Insurance reserve initialized");
-  
+
   console.log("\n=== Next Steps ===");
-  console.log("1. Transfer ownership to multisig wallet");
-  console.log("2. Add funds to insurance reserve");
-  console.log("3. Configure additional risk parameters");
-  console.log("4. Set up monitoring and alerting");
-  console.log("5. Run comprehensive security tests");
-  
-  return flashLoan;
+  console.log("1. Save contract address:", contractAddress);
+  console.log("2. Add it to bot/.env as FLASH_LOAN_ADDRESS");
+  console.log("3. Test on Amoy testnet first before mainnet");
+  console.log("4. Verify contract on PolygonScan:");
+  console.log(`   npx hardhat verify --network polygon ${contractAddress} ${FACTORY} ${ROUTER} ${USDC} ${WMATIC} ${WETH} ${DAI} ${ORACLE_USDC} ${FEE_RECIPIENT}`);
 }
 
 main()

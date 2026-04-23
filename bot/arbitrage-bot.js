@@ -1,16 +1,22 @@
 const { ethers } = require("ethers");
 require("dotenv").config();
 
-// Token addresses on Polygon
-const TOKEN_ADDRESSES = {
+// ============ TOKEN ADDRESSES (Polygon Mainnet) ============
+const TOKENS = {
   USDC: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
   WMATIC: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270",
   WETH: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619",
-  DAI: "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063"
+  DAI: "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063",
+  WBTC: "0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6",
+  QUICK: "0xB5C064F955D8e7F38fE0460C556a72987494eE17",
+  LINK: "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39",
+  AAVE: "0xD6DF932A45C0f255f85145f286eA0b292B21C90B",
+  USDT: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
+  CRV: "0x172370d5Cd63279eFa6d502DAB29171933a610AF"
 };
 
-// DEX addresses on Polygon
-const DEX_ADDRESSES = {
+// ============ DEX ADDRESSES ============
+const DEXES = {
   QuickSwap: {
     factory: "0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32",
     router: "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff"
@@ -21,272 +27,241 @@ const DEX_ADDRESSES = {
   }
 };
 
-// FlashLoanPolygon ABI (simplified)
+// ============ 18 TRIANGULAR PATHS ============
+const PATHS = [
+  // USDC base
+  { start: TOKENS.USDC, mid1: TOKENS.WETH, mid2: TOKENS.DAI, end: TOKENS.USDC, decimals: 6 },
+  { start: TOKENS.USDC, mid1: TOKENS.WMATIC, mid2: TOKENS.WETH, end: TOKENS.USDC, decimals: 6 },
+  { start: TOKENS.USDC, mid1: TOKENS.WBTC, mid2: TOKENS.WETH, end: TOKENS.USDC, decimals: 6 },
+  { start: TOKENS.USDC, mid1: TOKENS.WETH, mid2: TOKENS.WBTC, end: TOKENS.USDC, decimals: 6 },
+  { start: TOKENS.USDC, mid1: TOKENS.QUICK, mid2: TOKENS.WMATIC, end: TOKENS.USDC, decimals: 6 },
+  { start: TOKENS.USDC, mid1: TOKENS.AAVE, mid2: TOKENS.WETH, end: TOKENS.USDC, decimals: 6 },
+  { start: TOKENS.USDC, mid1: TOKENS.LINK, mid2: TOKENS.WETH, end: TOKENS.USDC, decimals: 6 },
+  { start: TOKENS.USDC, mid1: TOKENS.USDT, mid2: TOKENS.DAI, end: TOKENS.USDC, decimals: 6 },
+  { start: TOKENS.USDC, mid1: TOKENS.CRV, mid2: TOKENS.WETH, end: TOKENS.USDC, decimals: 6 },
+  // DAI base
+  { start: TOKENS.DAI, mid1: TOKENS.WETH, mid2: TOKENS.USDC, end: TOKENS.DAI, decimals: 18 },
+  { start: TOKENS.DAI, mid1: TOKENS.WMATIC, mid2: TOKENS.USDC, end: TOKENS.DAI, decimals: 18 },
+  { start: TOKENS.DAI, mid1: TOKENS.WBTC, mid2: TOKENS.WETH, end: TOKENS.DAI, decimals: 18 },
+  { start: TOKENS.DAI, mid1: TOKENS.USDT, mid2: TOKENS.USDC, end: TOKENS.DAI, decimals: 18 },
+  // WETH base
+  { start: TOKENS.WETH, mid1: TOKENS.WBTC, mid2: TOKENS.USDC, end: TOKENS.WETH, decimals: 18 },
+  { start: TOKENS.WETH, mid1: TOKENS.WMATIC, mid2: TOKENS.USDC, end: TOKENS.WETH, decimals: 18 },
+  { start: TOKENS.WETH, mid1: TOKENS.AAVE, mid2: TOKENS.USDC, end: TOKENS.WETH, decimals: 18 },
+  { start: TOKENS.WETH, mid1: TOKENS.LINK, mid2: TOKENS.USDC, end: TOKENS.WETH, decimals: 18 },
+  // WMATIC base
+  { start: TOKENS.WMATIC, mid1: TOKENS.WETH, mid2: TOKENS.USDC, end: TOKENS.WMATIC, decimals: 18 },
+];
+
+// ============ ABIs ============
 const FLASH_LOAN_ABI = [
   "function initiateFlashLoan(address _token, uint256 _amount, uint256 _slippageBps) external",
-  "function executeMultiDexArbitrage(address _token, uint256 _amount, uint256 _slippageBps, address[] calldata _routers, address[][] calldata _paths) external returns (uint256)",
   "function getAssetRiskConfig(address asset) external view returns (uint256 maxLoanAmount, uint256 ltvRatio, uint256 riskScore, bool isActive)",
   "function circuitBreakerActive() public view returns (bool)"
 ];
 
-// PriceOraclePolygon ABI (simplified)
-const PRICE_ORACLE_ABI = [
-  "function getPrice(string memory dexName, address tokenA, address tokenB, uint256 amountIn) public view returns (uint256 amountOut)",
-  "function getArbitrageOpportunity(address tokenA, address tokenB, uint256 amountIn) public view returns (string memory dexWithBestPrice, uint256 bestPrice, uint256 priceDifference)",
-  "function addChainlinkOracle(address token, address oracle) external",
-  "function addDex(string memory name, address factory, address router) external"
+const ROUTER_ABI = [
+  "function getAmountsOut(uint amountIn, address[] calldata path) external view returns (uint[] memory amounts)"
 ];
 
+// ============ BOT ============
 class ArbitrageBot {
-  constructor(rpcUrl, privateKey, flashLoanAddress, priceOracleAddress) {
-    this.provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+  constructor(rpcUrl, privateKey, flashLoanAddress) {
+    this.provider = new ethers.JsonRpcProvider(rpcUrl);
     this.wallet = new ethers.Wallet(privateKey, this.provider);
-    
-    // Initialize contracts with proper ABIs
-    this.flashLoanContract = new ethers.Contract(
-      flashLoanAddress,
-      FLASH_LOAN_ABI,
-      this.wallet
-    );
-    
-    this.priceOracleContract = new ethers.Contract(
-      priceOracleAddress,
-      PRICE_ORACLE_ABI,
-      this.wallet
-    );
-    
-    this.gasPrice = ethers.BigNumber.from(0);
-    this.lastBlockNumber = 0;
-    
-    // Update gas price periodically
+
+    this.flashLoanContract = new ethers.Contract(flashLoanAddress, FLASH_LOAN_ABI, this.wallet);
+
+    this.routers = {
+      QuickSwap: new ethers.Contract(DEXES.QuickSwap.router, ROUTER_ABI, this.provider),
+      SushiSwap: new ethers.Contract(DEXES.SushiSwap.router, ROUTER_ABI, this.provider)
+    };
+
+    this.gasPrice = 0n;
+    this.lastBlock = 0;
+    this.totalProfit = 0n;
+    this.txCount = 0;
+    this.errorCount = 0;
+    this.scanCount = 0;
+
     this.updateGasPrice();
-    setInterval(() => this.updateGasPrice(), 30000); // Every 30 seconds
+    setInterval(() => this.updateGasPrice(), 30000);
   }
 
-  /**
-   * Update current gas price
-   */
   async updateGasPrice() {
     try {
       const feeData = await this.provider.getFeeData();
-      this.gasPrice = feeData.gasPrice || ethers.BigNumber.from(0);
-      console.log(`Current gas price: ${ethers.utils.formatUnits(this.gasPrice, "gwei")} Gwei`);
-    } catch (error) {
-      console.error("Error updating gas price:", error);
+      this.gasPrice = feeData.gasPrice || 0n;
+      console.log(`⛽ Gas: ${ethers.formatUnits(this.gasPrice, "gwei")} Gwei`);
+    } catch (e) {
+      console.error("Gas update error:", e.message);
     }
   }
 
-  /**
-   * Monitor for arbitrage opportunities
-   */
+  async getPrice(router, tokenIn, tokenOut, amountIn) {
+    try {
+      const amounts = await router.getAmountsOut(amountIn, [tokenIn, tokenOut]);
+      return amounts[1];
+    } catch {
+      return 0n;
+    }
+  }
+
+  async findArbitrageOpportunities() {
+    const opportunities = [];
+
+    for (const path of PATHS) {
+      const testAmount = ethers.parseUnits("1000", path.decimals);
+
+      for (const [dexName, router] of Object.entries(this.routers)) {
+        try {
+          const hop1 = await this.getPrice(router, path.start, path.mid1, testAmount);
+          if (hop1 === 0n) continue;
+
+          const hop2 = await this.getPrice(router, path.mid1, path.mid2, hop1);
+          if (hop2 === 0n) continue;
+
+          const hop3 = await this.getPrice(router, path.mid2, path.end, hop2);
+          if (hop3 === 0n) continue;
+
+          this.scanCount++;
+
+          const flashFee = (testAmount * 30n) / 10000n;
+          const repayAmount = testAmount + flashFee;
+          const gasCost = this.gasPrice * 600000n;
+
+          if (hop3 > repayAmount) {
+            const grossProfit = hop3 - repayAmount;
+            const protocolFee = (grossProfit * 100n) / 10000n;
+            const netProfit = grossProfit - protocolFee;
+
+            if (netProfit > gasCost) {
+              const pathStr = `${this.sym(path.start)}→${this.sym(path.mid1)}→${this.sym(path.mid2)}→${this.sym(path.end)}`;
+              console.log(`💰 [${dexName}] ${pathStr} | Profit: ${ethers.formatUnits(netProfit, path.decimals)}`);
+
+              opportunities.push({
+                dex: dexName, pathStr, netProfit,
+                rawProfit: netProfit,
+                token: path.start,
+                amount: testAmount,
+                decimals: path.decimals
+              });
+            }
+          }
+        } catch { /* skip */ }
+      }
+    }
+
+    return opportunities;
+  }
+
+  async executeArbitrage(opp) {
+    try {
+      console.log(`\n🚀 Executing: [${opp.dex}] ${opp.pathStr}`);
+      console.log(`   Profit: ${ethers.formatUnits(opp.netProfit, opp.decimals)}`);
+
+      const cbActive = await this.flashLoanContract.circuitBreakerActive();
+      if (cbActive) { console.log("⚠️  Circuit breaker active"); return; }
+
+      const config = await this.flashLoanContract.getAssetRiskConfig(opp.token);
+      if (!config.isActive) { console.log("⚠️  Token not active"); return; }
+
+      const slippageBps = 50n;
+
+      const gasEstimate = await this.flashLoanContract.initiateFlashLoan.estimateGas(
+        opp.token, opp.amount, slippageBps
+      );
+
+      const tx = await this.flashLoanContract.initiateFlashLoan(
+        opp.token, opp.amount, slippageBps,
+        {
+          gasLimit: (gasEstimate * 120n) / 100n,
+          gasPrice: this.gasPrice
+        }
+      );
+
+      console.log(`   Tx: ${tx.hash}`);
+
+      const receipt = await Promise.race([
+        tx.wait(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 60000))
+      ]);
+
+      console.log(`✅ Confirmed: ${receipt.hash} | Gas: ${receipt.gasUsed}`);
+      this.txCount++;
+      this.totalProfit += opp.rawProfit;
+      console.log(`📊 Txs: ${this.txCount} | Est. profit: ${ethers.formatUnits(this.totalProfit, opp.decimals)}`);
+
+    } catch (e) {
+      this.errorCount++;
+      console.error(`❌ Failed: ${e.message}`);
+    }
+  }
+
   async monitorOpportunities() {
-    console.log("Starting arbitrage monitoring...");
-    
-    // Listen for new blocks
+    console.log("👀 Arbitrage bot started");
+    console.log(`   Wallet  : ${this.wallet.address}`);
+    console.log(`   Contract: ${await this.flashLoanContract.getAddress()}`);
+    console.log(`   Paths   : ${PATHS.length} triangular paths × 2 DEXes = ${PATHS.length * 2} combos/block`);
+    console.log(`   Tokens  : USDC, DAI, WETH, WMATIC, WBTC, QUICK, LINK, AAVE, USDT, CRV\n`);
+
     this.provider.on("block", async (blockNumber) => {
-      if (blockNumber <= this.lastBlockNumber) return;
-      this.lastBlockNumber = blockNumber;
-      
-      console.log(`Processing block ${blockNumber}`);
-      
+      if (blockNumber <= this.lastBlock) return;
+      this.lastBlock = blockNumber;
+      console.log(`📦 Block ${blockNumber} | Total scans: ${this.scanCount}`);
+
       try {
-        // Check if circuit breaker is active
-        const circuitBreakerActive = await this.flashLoanContract.circuitBreakerActive();
-        if (circuitBreakerActive) {
-          console.log("Circuit breaker is active, skipping arbitrage check");
+        const opportunities = await this.findArbitrageOpportunities();
+
+        if (opportunities.length === 0) {
+          console.log("   No profitable opportunities");
           return;
         }
-        
-        // Check for opportunities
-        const opportunities = await this.findArbitrageOpportunities();
-        
-        for (const opportunity of opportunities) {
-          if (opportunity.isProfitable) {
-            console.log("Found profitable opportunity:", opportunity);
-            await this.executeArbitrage(opportunity);
-          }
-        }
-      } catch (error) {
-        console.error("Error in monitoring loop:", error);
+
+        console.log(`   Found ${opportunities.length} opportunity/ies!`);
+        opportunities.sort((a, b) => b.rawProfit > a.rawProfit ? 1 : -1);
+        await this.executeArbitrage(opportunities[0]);
+
+      } catch (e) {
+        console.error(`Block error: ${e.message}`);
       }
     });
   }
 
-  /**
-   * Find arbitrage opportunities across DEXs
-   */
-  async findArbitrageOpportunities() {
-    const opportunities = [];
-    
-    // Common token paths to check
-    const tokenPaths = [
-      [TOKEN_ADDRESSES.USDC, TOKEN_ADDRESSES.WETH, TOKEN_ADDRESSES.DAI, TOKEN_ADDRESSES.USDC],
-      [TOKEN_ADDRESSES.USDC, TOKEN_ADDRESSES.WMATIC, TOKEN_ADDRESSES.WETH, TOKEN_ADDRESSES.USDC],
-      [TOKEN_ADDRESSES.DAI, TOKEN_ADDRESSES.WETH, TOKEN_ADDRESSES.USDC, TOKEN_ADDRESSES.DAI]
-    ];
-    
-    const testAmount = ethers.utils.parseUnits("1000", 6); // 1000 USDC
-    
-    for (const path of tokenPaths) {
-      try {
-        // Get arbitrage opportunity from price oracle
-        const result = await this.priceOracleContract.getArbitrageOpportunity(
-          path[0], 
-          path[path.length - 1], 
-          testAmount
-        );
-        
-        if (result.dexWithBestPrice && result.bestPrice.gt(0)) {
-          // Calculate profit
-          const expectedProfit = result.bestPrice.sub(testAmount);
-          const gasCostEstimate = this.gasPrice.mul(500000); // Estimate gas cost for flash loan
-          const isProfitable = expectedProfit.gt(gasCostEstimate) && expectedProfit.gt(0);
-          
-          opportunities.push({
-            dexName: result.dexWithBestPrice,
-            tokenPath: path.map(addr => this.getTokenSymbol(addr)),
-            expectedProfit: ethers.utils.formatUnits(expectedProfit, 6),
-            gasCostEstimate: ethers.utils.formatUnits(gasCostEstimate, 18),
-            isProfitable: isProfitable,
-            rawProfit: expectedProfit,
-            rawGasCost: gasCostEstimate
-          });
-        }
-      } catch (error) {
-        console.error(`Error checking arbitrage opportunity:`, error);
-      }
+  sym(address) {
+    for (const [s, a] of Object.entries(TOKENS)) {
+      if (a.toLowerCase() === address.toLowerCase()) return s;
     }
-    
-    return opportunities;
+    return address.slice(0, 6);
   }
 
-  /**
-   * Execute arbitrage trade
-   */
-  async executeArbitrage(opportunity) {
-    try {
-      console.log(`Executing arbitrage on ${opportunity.dexName}`);
-      
-      // Check risk configuration
-      try {
-        const usdcConfig = await this.flashLoanContract.getAssetRiskConfig(TOKEN_ADDRESSES.USDC);
-        if (!usdcConfig.isActive) {
-          console.log("USDC is not active for flash loans, skipping execution");
-          return;
-        }
-      } catch (error) {
-        console.error("Error checking risk configuration:", error);
-        return;
-      }
-      
-      // Prepare parameters
-      const amount = ethers.utils.parseUnits("1000", 6); // 1000 USDC
-      const slippageBps = 50; // 0.5% slippage
-      
-      // Estimate gas
-      try {
-        const gasEstimate = await this.flashLoanContract.estimateGas.initiateFlashLoan(
-          TOKEN_ADDRESSES.USDC,
-          amount,
-          slippageBps
-        );
-        
-        console.log(`Gas estimate: ${gasEstimate.toString()}`);
-        
-        // Execute flash loan with proper gas settings
-        const tx = await this.flashLoanContract.initiateFlashLoan(
-          TOKEN_ADDRESSES.USDC,
-          amount,
-          slippageBps,
-          {
-            gasLimit: gasEstimate.mul(120).div(100), // Add 20% buffer
-            gasPrice: this.gasPrice
-          }
-        );
-        
-        console.log("Transaction sent:", tx.hash);
-        
-        // Wait for confirmation with timeout
-        const receipt = await Promise.race([
-          tx.wait(),
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new Error("Transaction confirmation timeout")), 60000)
-          )
-        ]);
-        
-        console.log("Transaction confirmed:", receipt.transactionHash);
-        
-        // Log results
-        console.log(`Gas used: ${receipt.gasUsed.toString()}`);
-        console.log(`Effective gas price: ${ethers.utils.formatUnits(receipt.effectiveGasPrice, "gwei")} Gwei`);
-      } catch (error) {
-        console.error("Error estimating or executing transaction:", error);
-      }
-    } catch (error) {
-      console.error("Error executing arbitrage:", error);
-    }
-  }
-
-  /**
-   * Get token symbol from address
-   */
-  getTokenSymbol(address) {
-    for (const [symbol, addr] of Object.entries(TOKEN_ADDRESSES)) {
-      if (addr.toLowerCase() === address.toLowerCase()) {
-        return symbol;
-      }
-    }
-    return address;
-  }
-
-  /**
-   * Stop monitoring
-   */
   stop() {
     this.provider.removeAllListeners("block");
-    console.log("Stopped arbitrage monitoring");
+    console.log(`\n🛑 Stopped | Txs: ${this.txCount} | Errors: ${this.errorCount}`);
   }
 }
 
-// Configuration
-const CONFIG = {
-  RPC_URL: process.env.POLYGON_RPC_URL || "https://polygon-rpc.com/",
-  PRIVATE_KEY: process.env.PRIVATE_KEY || "",
-  FLASH_LOAN_ADDRESS: process.env.FLASH_LOAN_ADDRESS || "",
-  PRICE_ORACLE_ADDRESS: process.env.PRICE_ORACLE_ADDRESS || ""
-};
-
-// Main execution
+// ============ MAIN ============
 async function main() {
-  if (!CONFIG.PRIVATE_KEY || !CONFIG.FLASH_LOAN_ADDRESS || !CONFIG.PRICE_ORACLE_ADDRESS) {
-    console.error("Missing required environment variables");
+  const { POLYGON_RPC_URL, PRIVATE_KEY, FLASH_LOAN_ADDRESS } = process.env;
+
+  if (!PRIVATE_KEY || !FLASH_LOAN_ADDRESS) {
+    console.error("❌ Missing PRIVATE_KEY or FLASH_LOAN_ADDRESS in .env");
     process.exit(1);
   }
 
   const bot = new ArbitrageBot(
-    CONFIG.RPC_URL,
-    CONFIG.PRIVATE_KEY,
-    CONFIG.FLASH_LOAN_ADDRESS,
-    CONFIG.PRICE_ORACLE_ADDRESS
+    POLYGON_RPC_URL || "https://polygon-rpc.com/",
+    PRIVATE_KEY,
+    FLASH_LOAN_ADDRESS
   );
 
-  // Handle graceful shutdown
-  process.on("SIGINT", () => {
-    console.log("Shutting down...");
-    bot.stop();
-    process.exit(0);
-  });
-
-  // Start monitoring
+  process.on("SIGINT", () => { bot.stop(); process.exit(0); });
   await bot.monitorOpportunities();
 }
 
-// Run the bot
 if (require.main === module) {
-  main().catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
+  main().catch((e) => { console.error(e); process.exit(1); });
 }
 
 module.exports = { ArbitrageBot };
