@@ -93,7 +93,7 @@ describe("FlashLoanPolygon Fork Test", function () {
   describe("Multi-DEX Arbitrage Simulation", function () {
     it("Should simulate multi-DEX arbitrage", async function () {
       // Add supported routers
-      await flashLoan.connect(feeRecipient).addSupportedRouter("0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506"); // SushiSwap
+      await flashLoan.connect(owner).addSupportedRouter("0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506"); // SushiSwap
 
       // In a real implementation, this would execute trades across multiple DEXs
       // For testing purposes, we just verify the function exists and is callable

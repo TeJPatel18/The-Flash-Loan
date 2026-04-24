@@ -65,6 +65,7 @@ contract LiquidationBot is IFlashLoanSimpleReceiver, ReentrancyGuard, Ownable, P
 
     // SushiSwap on Polygon
     address public constant SUSHISWAP_ROUTER = 0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506;
+    address public constant SUSHISWAP_FACTORY = 0xc35DADB65012eC5796536bD9864eD8773aBc74C4;
 
     uint256 private constant BASIS_POINTS = 10000;
     uint256 private constant MIN_PROFIT_THRESHOLD = 1e4; // Min profit before executing
@@ -85,6 +86,7 @@ contract LiquidationBot is IFlashLoanSimpleReceiver, ReentrancyGuard, Ownable, P
     error NotProfitable();
     error InvalidAddress();
     error PairNotFound();
+    error InvalidFlashLoanAsset();
 
     constructor() Ownable(msg.sender) {}
 
@@ -154,6 +156,8 @@ contract LiquidationBot is IFlashLoanSimpleReceiver, ReentrancyGuard, Ownable, P
             bool useQuickSwap
         ) = abi.decode(params, (address, address, address, uint256, bool));
 
+        if (asset != debtAsset || amount != debtToCover) revert InvalidFlashLoanAsset();
+
         uint256 repayAmount = amount + premium;
 
         // Step 1 — Approve Aave to spend debt token for liquidation
@@ -217,6 +221,11 @@ contract LiquidationBot is IFlashLoanSimpleReceiver, ReentrancyGuard, Ownable, P
         bool useQuickSwap
     ) private returns (uint256) {
         address routerAddr = useQuickSwap ? QUICKSWAP_ROUTER : SUSHISWAP_ROUTER;
+        address factoryAddr = useQuickSwap ? QUICKSWAP_FACTORY : SUSHISWAP_FACTORY;
+        if (IUniswapV2Factory(factoryAddr).getPair(collateralAsset, debtAsset) == address(0)) {
+            revert PairNotFound();
+        }
+
         IUniswapV2Router02 swapRouter = IUniswapV2Router02(routerAddr);
 
         address[] memory path = new address[](2);
@@ -260,6 +269,11 @@ contract LiquidationBot is IFlashLoanSimpleReceiver, ReentrancyGuard, Ownable, P
 
         // Estimate swap output
         address routerAddr = useQuickSwap ? QUICKSWAP_ROUTER : SUSHISWAP_ROUTER;
+        address factoryAddr = useQuickSwap ? QUICKSWAP_FACTORY : SUSHISWAP_FACTORY;
+        if (IUniswapV2Factory(factoryAddr).getPair(collateralAsset, debtAsset) == address(0)) {
+            return (0, false);
+        }
+
         IUniswapV2Router02 swapRouter = IUniswapV2Router02(routerAddr);
 
         address[] memory path = new address[](2);

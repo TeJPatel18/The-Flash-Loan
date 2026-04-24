@@ -42,7 +42,7 @@ describe("FlashLoanPolygon", function () {
       expect(await flashLoan.DAI()).to.equal(DAI);
       expect(await flashLoan.tokenOracles(USDC)).to.equal(CHAINLINK_ORACLE);
       expect(await flashLoan.feeRecipient()).to.equal(feeRecipient.address);
-      expect(await flashLoan.owner()).to.equal(feeRecipient.address);
+      expect(await flashLoan.owner()).to.equal(owner.address);
     });
 
     it("Should initialize with correct default values", async function () {
@@ -121,12 +121,12 @@ describe("FlashLoanPolygon", function () {
 
   describe("Circuit Breaker", function () {
     it("Should allow owner to trigger circuit breaker", async function () {
-      await flashLoan.connect(feeRecipient).triggerCircuitBreaker("Test reason");
+      await flashLoan.connect(owner).triggerCircuitBreaker("Test reason");
       expect(await flashLoan.circuitBreakerActive()).to.equal(true);
     });
 
     it("Should prevent flash loans when circuit breaker is active", async function () {
-      await flashLoan.connect(feeRecipient).triggerCircuitBreaker("Test reason");
+      await flashLoan.connect(owner).triggerCircuitBreaker("Test reason");
 
       await expect(
         flashLoan.connect(user).initiateFlashLoan(USDC, parseUnits("1000", 6), 500)
@@ -134,10 +134,10 @@ describe("FlashLoanPolygon", function () {
     });
 
     it("Should allow owner to reset circuit breaker", async function () {
-      await flashLoan.connect(feeRecipient).triggerCircuitBreaker("Test reason");
+      await flashLoan.connect(owner).triggerCircuitBreaker("Test reason");
       expect(await flashLoan.circuitBreakerActive()).to.equal(true);
 
-      await flashLoan.connect(feeRecipient).resetCircuitBreaker();
+      await flashLoan.connect(owner).resetCircuitBreaker();
       expect(await flashLoan.circuitBreakerActive()).to.equal(false);
     });
   });
@@ -157,7 +157,7 @@ describe("FlashLoanPolygon", function () {
 
   describe("Risk Management", function () {
     it("Should allow owner to update asset risk config", async function () {
-      await flashLoan.connect(feeRecipient).updateAssetRiskConfig(
+      await flashLoan.connect(owner).updateAssetRiskConfig(
         USDC,
         parseUnits("20000", 6),
         9000, // 90% LTV
@@ -173,27 +173,27 @@ describe("FlashLoanPolygon", function () {
 
     it("Should reject invalid risk configurations", async function () {
       await expect(
-        flashLoan.connect(feeRecipient).updateAssetRiskConfig(USDC, 0, 5000, 100)
+        flashLoan.connect(owner).updateAssetRiskConfig(USDC, 0, 5000, 100)
       ).to.be.revertedWith("Invalid config");
 
       await expect(
-        flashLoan.connect(feeRecipient).updateAssetRiskConfig(USDC, parseUnits("10000", 6), 15000, 100)
+        flashLoan.connect(owner).updateAssetRiskConfig(USDC, parseUnits("10000", 6), 15000, 100)
       ).to.be.revertedWith("Invalid config");
 
       await expect(
-        flashLoan.connect(feeRecipient).updateAssetRiskConfig(USDC, parseUnits("10000", 6), 5000, 1500)
+        flashLoan.connect(owner).updateAssetRiskConfig(USDC, parseUnits("10000", 6), 5000, 1500)
       ).to.be.revertedWith("Invalid config");
     });
   });
 
   describe("Pause Functionality", function () {
     it("Should allow owner to pause contract", async function () {
-      await flashLoan.connect(feeRecipient).emergencyPause();
+      await flashLoan.connect(owner).emergencyPause();
       expect(await flashLoan.paused()).to.equal(true);
     });
 
     it("Should prevent flash loans when paused", async function () {
-      await flashLoan.connect(feeRecipient).emergencyPause();
+      await flashLoan.connect(owner).emergencyPause();
 
       await expect(
         flashLoan.connect(user).initiateFlashLoan(USDC, parseUnits("1000", 6), 500)
@@ -201,10 +201,10 @@ describe("FlashLoanPolygon", function () {
     });
 
     it("Should allow owner to unpause contract", async function () {
-      await flashLoan.connect(feeRecipient).emergencyPause();
+      await flashLoan.connect(owner).emergencyPause();
       expect(await flashLoan.paused()).to.equal(true);
 
-      await flashLoan.connect(feeRecipient).emergencyUnpause();
+      await flashLoan.connect(owner).emergencyUnpause();
       expect(await flashLoan.paused()).to.equal(false);
     });
   });
@@ -212,13 +212,13 @@ describe("FlashLoanPolygon", function () {
   describe("Multi-DEX Arbitrage", function () {
     it("Should allow adding supported routers", async function () {
       const newRouter = "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506"; // SushiSwap Router
-      await flashLoan.connect(feeRecipient).addSupportedRouter(newRouter);
+      await flashLoan.connect(owner).addSupportedRouter(newRouter);
       expect(await flashLoan.supportedRouters(newRouter)).to.equal(true);
     });
 
     it("Should reject invalid router addresses", async function () {
       await expect(
-        flashLoan.connect(feeRecipient).addSupportedRouter(ethers.ZeroAddress)
+        flashLoan.connect(owner).addSupportedRouter(ethers.ZeroAddress)
       ).to.be.revertedWith("Invalid router");
     });
   });

@@ -30,6 +30,7 @@ const DATA_PROVIDER_ABI = [
 ];
 
 const LIQUIDATION_BOT_ABI = [
+  "function owner() external view returns (address)",
   "function executeLiquidation(address collateralAsset, address debtAsset, address borrower, uint256 debtToCover, bool useQuickSwap) external",
   "function estimateLiquidationProfit(address collateralAsset, address debtAsset, uint256 debtToCover, bool useQuickSwap) external view returns (uint256 estimatedProfit, bool isProfitable)"
 ];
@@ -64,7 +65,7 @@ class LiquidationBot {
     this.lastSubgraphFetch = 0;
     this.gasPrice        = 0n;
     this.lastBlock       = 0;
-    this.totalProfit     = 0n;
+    this.totalProfitByToken = new Map();
     this.txCount         = 0;
     this.errorCount      = 0;
 
@@ -134,12 +135,23 @@ class LiquidationBot {
         if (debtToken.address === collToken.address) continue;
 
         try {
-          const reserveData = await this.dataProvider.getUserReserveData(
+          const debtReserveData = await this.dataProvider.getUserReserveData(
             debtToken.address, borrower
           );
 
-          const totalDebt = reserveData.currentVariableDebt + reserveData.currentStableDebt;
+          const totalDebt = debtReserveData.currentVariableDebt + debtReserveData.currentStableDebt;
           if (totalDebt === 0n) continue;
+
+          const collateralReserveData = await this.dataProvider.getUserReserveData(
+            collToken.address, borrower
+          );
+
+          if (
+            collateralReserveData.currentATokenBalance === 0n ||
+            !collateralReserveData.usageAsCollateralEnabled
+          ) {
+            continue;
+          }
 
           const debtToCover = totalDebt / 2n;
           if (debtToCover === 0n) continue;
@@ -164,6 +176,7 @@ class LiquidationBot {
               debtToCover,
               useQuickSwap:     useQS,
               estimatedProfit:  bestHere,
+              profitDecimals:   debtToken.decimals,
               debtSymbol:       this.sym(debtToken.address),
               collateralSymbol: this.sym(collToken.address)
             };
@@ -181,7 +194,7 @@ class LiquidationBot {
       console.log(`\n🔥 Liquidating ${opp.borrower.slice(0, 10)}...`);
       console.log(`   Debt: ${opp.debtSymbol} | Collateral: ${opp.collateralSymbol}`);
       console.log(`   DEX: ${opp.useQuickSwap ? "QuickSwap" : "SushiSwap"}`);
-      console.log(`   Est. profit: ${ethers.formatUnits(opp.estimatedProfit, 6)} USDC`);
+      console.log(`   Est. profit: ${this.formatAmount(opp.estimatedProfit, opp.profitDecimals, opp.debtSymbol)}`);
 
       const gasEst = await this.botContract.executeLiquidation.estimateGas(
         opp.collateralAsset, opp.debtAsset, opp.borrower, opp.debtToCover, opp.useQuickSwap
@@ -201,8 +214,12 @@ class LiquidationBot {
 
       console.log(`✅ Done! Gas: ${receipt.gasUsed}`);
       this.txCount++;
-      this.totalProfit += opp.estimatedProfit;
-      console.log(`📊 Liquidations: ${this.txCount} | Total profit: ${ethers.formatUnits(this.totalProfit, 6)} USDC`);
+
+      const previousProfit = this.totalProfitByToken.get(opp.debtSymbol) || 0n;
+      const totalForToken = previousProfit + opp.estimatedProfit;
+      this.totalProfitByToken.set(opp.debtSymbol, totalForToken);
+
+      console.log(`📊 Liquidations: ${this.txCount} | ${opp.debtSymbol} profit: ${this.formatAmount(totalForToken, opp.profitDecimals, opp.debtSymbol)}`);
 
     } catch (e) {
       this.errorCount++;
@@ -216,6 +233,12 @@ class LiquidationBot {
     console.log(`   Wallet   : ${this.wallet.address}`);
     console.log(`   Contract : ${await this.botContract.getAddress()}`);
     console.log(`   Strategy : Subgraph → borrower list, On-chain → health check\n`);
+
+    const owner = await this.botContract.owner();
+    if (owner.toLowerCase() !== this.wallet.address.toLowerCase()) {
+      console.error(`❌ Wallet is not LiquidationBot owner. Owner: ${owner}`);
+      process.exit(1);
+    }
 
     if (!GRAPH_API_KEY) {
       console.error("❌ GRAPH_API_KEY missing in .env");
@@ -278,7 +301,7 @@ class LiquidationBot {
       }
 
       if (bestOpp) {
-        console.log(`💰 Best opportunity! Profit: ${ethers.formatUnits(bestOpp.estimatedProfit, 6)} USDC`);
+        console.log(`💰 Best opportunity! Profit: ${this.formatAmount(bestOpp.estimatedProfit, bestOpp.profitDecimals, bestOpp.debtSymbol)}`);
         await this.executeLiquidation(bestOpp);
       } else {
         console.log("   At-risk positions found but none profitable");
@@ -291,6 +314,10 @@ class LiquidationBot {
       if (t.address.toLowerCase() === address.toLowerCase()) return s;
     }
     return address.slice(0, 6);
+  }
+
+  formatAmount(amount, decimals, symbol) {
+    return `${ethers.formatUnits(amount, decimals)} ${symbol}`;
   }
 
   stop() {
