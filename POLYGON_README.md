@@ -14,7 +14,7 @@ Root `.env`:
 ```env
 POLYGON_RPC_URL=https://polygon-rpc.com/
 PRIVATE_KEY=your_wallet_private_key
-POLYGONSCAN_API_KEY=your_polygonscan_api_key_optional
+ETHERSCAN_API_KEY=your_etherscan_v2_api_key_optional
 ```
 
 Bot `.env`:

@@ -56,22 +56,11 @@ module.exports = {
   },
 
   etherscan: {
-    apiKey: {
-      polygon: process.env.POLYGONSCAN_API_KEY || "",
-      polygonAmoy: process.env.POLYGONSCAN_API_KEY || "",
-      bsc: process.env.BSCSCAN_API_KEY || "",
-      bscTestnet: process.env.BSCSCAN_API_KEY || "",
-    },
-    customChains: [
-      {
-        network: "polygonAmoy",
-        chainId: 80002,
-        urls: {
-          apiURL: "https://api-amoy.polygonscan.com/api",
-          browserURL: "https://amoy.polygonscan.com",
-        },
-      },
-    ],
+    apiKey: process.env.ETHERSCAN_API_KEY || process.env.POLYGONSCAN_API_KEY || "",
+  },
+
+  sourcify: {
+    enabled: false,
   },
 
   mocha: {
