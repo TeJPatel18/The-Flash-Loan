@@ -4,9 +4,18 @@ require("dotenv").config();
 // ============ AAVE V3 POLYGON ============
 const AAVE_POOL          = "0x794a61358D6845594F94dc1DB02A252b5b4814aD";
 const AAVE_DATA_PROVIDER = "0x69FA688f1Dc47d4B5d8029D5a35FB7a548310654";
+const AAVE_ADDRESSES_PROVIDER = "0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb";
+
+// ============ DEXES ============
+const QUICKSWAP_ROUTER  = "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff";
+const QUICKSWAP_FACTORY = "0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32";
+const SUSHISWAP_ROUTER  = "0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506";
+const SUSHISWAP_FACTORY = "0xc35DADB65012eC5796536bD9864eD8773aBc74C4";
 
 const GRAPH_API_KEY = process.env.GRAPH_API_KEY || "";
 const SUBGRAPH_URL  = `https://gateway.thegraph.com/api/${GRAPH_API_KEY}/subgraphs/id/FBVyahKnFFc1b6E7CpRHK59whHta3AkLCAgqfpReXAvK`;
+const CLOSE_FACTOR_HF_THRESHOLD = ethers.parseEther("0.95");
+const BPS = 10000n;
 
 // ============ TOKENS ============
 const TOKENS = {
@@ -26,8 +35,18 @@ const POOL_ABI = [
   "function getUserAccountData(address user) external view returns (uint256 totalCollateralBase, uint256 totalDebtBase, uint256 availableBorrowsBase, uint256 currentLiquidationThreshold, uint256 ltv, uint256 healthFactor)"
 ];
 
+const ADDRESSES_PROVIDER_ABI = [
+  "function getPriceOracle() external view returns (address)"
+];
+
+const PRICE_ORACLE_ABI = [
+  "function BASE_CURRENCY_UNIT() external view returns (uint256)",
+  "function getAssetPrice(address asset) external view returns (uint256)"
+];
+
 const DATA_PROVIDER_ABI = [
-  "function getUserReserveData(address asset, address user) external view returns (uint256 currentATokenBalance, uint256 currentStableDebt, uint256 currentVariableDebt, uint256 principalStableDebt, uint256 scaledVariableDebt, uint256 stableRate, uint256 liquidityRate, uint40 stableRateLastUpdated, bool usageAsCollateralEnabled)"
+  "function getUserReserveData(address asset, address user) external view returns (uint256 currentATokenBalance, uint256 currentStableDebt, uint256 currentVariableDebt, uint256 principalStableDebt, uint256 scaledVariableDebt, uint256 stableRate, uint256 liquidityRate, uint40 stableRateLastUpdated, bool usageAsCollateralEnabled)",
+  "function getReserveConfigurationData(address asset) external view returns (uint256 decimals, uint256 ltv, uint256 liquidationThreshold, uint256 liquidationBonus, uint256 reserveFactor, bool usageAsCollateralEnabled, bool borrowingEnabled, bool stableBorrowRateEnabled, bool isActive, bool isFrozen)"
 ];
 
 const LIQUIDATION_BOT_ABI = [
@@ -35,6 +54,24 @@ const LIQUIDATION_BOT_ABI = [
   "function executeLiquidation(address collateralAsset, address debtAsset, address borrower, uint256 debtToCover, bool useQuickSwap) external",
   "function estimateLiquidationProfit(address collateralAsset, address debtAsset, uint256 debtToCover, bool useQuickSwap) external view returns (uint256 estimatedProfit, bool isProfitable)"
 ];
+
+const ROUTER_ABI = [
+  "function getAmountsOut(uint256 amountIn, address[] calldata path) external view returns (uint256[] memory amounts)"
+];
+
+const FACTORY_ABI = [
+  "function getPair(address tokenA, address tokenB) external view returns (address pair)"
+];
+
+const ERROR_SELECTORS = {
+  "0xb629b0e4": "Aave MustNotLeaveDust: liquidation would leave a dust-sized debt balance",
+  "0xd719ab69": "LiquidationBot PairNotFound",
+  "0xa5adf0af": "LiquidationBot NotProfitable",
+  "0xf13b7f34": "LiquidationBot InvalidFlashLoanAsset",
+  "0xb27a27bf": "LiquidationBot NotAavePool",
+  "0x118cdaa7": "OwnableUnauthorizedAccount",
+  "0x5274afe7": "SafeERC20FailedOperation"
+};
 
 // ============ SUBGRAPH QUERY ============
 // Get top 500 active borrowers sorted by debt size
@@ -60,18 +97,69 @@ class LiquidationBot {
 
     this.pool         = new ethers.Contract(AAVE_POOL, POOL_ABI, this.provider);
     this.dataProvider = new ethers.Contract(AAVE_DATA_PROVIDER, DATA_PROVIDER_ABI, this.provider);
+    this.addressesProvider = new ethers.Contract(AAVE_ADDRESSES_PROVIDER, ADDRESSES_PROVIDER_ABI, this.provider);
+    this.priceOracle  = null;
+    this.baseCurrencyUnit = 100000000n;
+    this.baseCurrencyDecimals = 8;
     this.botContract  = new ethers.Contract(liquidationBotAddress, LIQUIDATION_BOT_ABI, this.wallet);
+    this.dexes = {
+      quickswap: {
+        name: "QuickSwap",
+        router: new ethers.Contract(QUICKSWAP_ROUTER, ROUTER_ABI, this.provider),
+        factory: new ethers.Contract(QUICKSWAP_FACTORY, FACTORY_ABI, this.provider),
+        useQuickSwap: true
+      },
+      sushiswap: {
+        name: "SushiSwap",
+        router: new ethers.Contract(SUSHISWAP_ROUTER, ROUTER_ABI, this.provider),
+        factory: new ethers.Contract(SUSHISWAP_FACTORY, FACTORY_ABI, this.provider),
+        useQuickSwap: false
+      }
+    };
 
     this.borrowerList    = [];     // unique borrowers from subgraph
     this.lastSubgraphFetch = 0;
     this.gasPrice        = 0n;
     this.lastBlock       = 0;
+    this.isScanning      = false;
     this.totalProfitByToken = new Map();
     this.txCount         = 0;
     this.errorCount      = 0;
+    this.minDebtToCoverUsd = process.env.MIN_DEBT_TO_COVER_USD || "10";
+    this.minLeftoverDebtUsd = process.env.MIN_LEFTOVER_DEBT_USD || "1";
+    this.minNetProfitUsd = process.env.MIN_NET_PROFIT_USD || "0.25";
+    this.estimateBufferBps = BigInt(process.env.LIQUIDATION_ESTIMATE_BUFFER_BPS || "9500");
+    this.minDebtToCoverBase = 0n;
+    this.minLeftoverDebtBase = 0n;
+    this.minNetProfitBase = 0n;
 
     this.updateGasPrice();
     setInterval(() => this.updateGasPrice(), 30000);
+  }
+
+  async initialize() {
+    const oracleAddress = await this.addressesProvider.getPriceOracle();
+    this.priceOracle = new ethers.Contract(oracleAddress, PRICE_ORACLE_ABI, this.provider);
+
+    try {
+      this.baseCurrencyUnit = await this.priceOracle.BASE_CURRENCY_UNIT();
+      this.baseCurrencyDecimals = this.decimalsFromUnit(this.baseCurrencyUnit);
+    } catch {
+      this.baseCurrencyUnit = 100000000n;
+      this.baseCurrencyDecimals = 8;
+    }
+
+    this.minDebtToCoverBase = ethers.parseUnits(this.minDebtToCoverUsd, this.baseCurrencyDecimals);
+    this.minLeftoverDebtBase = ethers.parseUnits(this.minLeftoverDebtUsd, this.baseCurrencyDecimals);
+    this.minNetProfitBase = ethers.parseUnits(this.minNetProfitUsd, this.baseCurrencyDecimals);
+
+    console.log(`   Aave oracle: ${oracleAddress}`);
+    console.log(`   Min debt to cover: ${this.minDebtToCoverUsd} USD | Min net profit: ${this.minNetProfitUsd} USD`);
+  }
+
+  decimalsFromUnit(unit) {
+    const text = unit.toString();
+    return /^10*$/.test(text) ? text.length - 1 : 8;
   }
 
   async updateGasPrice() {
@@ -125,8 +213,75 @@ class LiquidationBot {
     }
   }
 
+  async valueInBase(asset, amount, decimals) {
+    const price = await this.priceOracle.getAssetPrice(asset);
+    return (amount * price) / (10n ** BigInt(decimals));
+  }
+
+  async estimateCollateralReceived(collToken, debtToken, debtToCover) {
+    const [collateralConfig, debtPrice, collateralPrice] = await Promise.all([
+      this.dataProvider.getReserveConfigurationData(collToken.address),
+      this.priceOracle.getAssetPrice(debtToken.address),
+      this.priceOracle.getAssetPrice(collToken.address)
+    ]);
+
+    if (!collateralConfig.isActive || collateralConfig.isFrozen || !collateralConfig.usageAsCollateralEnabled) {
+      return 0n;
+    }
+
+    const liquidationBonus = BigInt(collateralConfig.liquidationBonus);
+    const rawCollateral = (
+      debtToCover *
+      debtPrice *
+      liquidationBonus *
+      (10n ** BigInt(collToken.decimals))
+    ) / (
+      (10n ** BigInt(debtToken.decimals)) *
+      collateralPrice *
+      BPS
+    );
+
+    return (rawCollateral * this.estimateBufferBps) / BPS;
+  }
+
+  async quoteDex(dex, collToken, debtToken, collateralAmount) {
+    if (collateralAmount === 0n) return 0n;
+
+    const pair = await dex.factory.getPair(collToken.address, debtToken.address);
+    if (pair === ethers.ZeroAddress) return 0n;
+
+    try {
+      const amounts = await dex.router.getAmountsOut(collateralAmount, [collToken.address, debtToken.address]);
+      return amounts[amounts.length - 1];
+    } catch {
+      return 0n;
+    }
+  }
+
+  async estimateLiquidationRoute(collToken, debtToken, debtToCover, dex) {
+    const collateralAmount = await this.estimateCollateralReceived(collToken, debtToken, debtToCover);
+    const debtOut = await this.quoteDex(dex, collToken, debtToken, collateralAmount);
+    const flashFee = (debtToCover * 5n) / BPS;
+    const repayAmount = debtToCover + flashFee;
+
+    if (debtOut <= repayAmount) return null;
+
+    const estimatedProfit = debtOut - repayAmount;
+    const estimatedProfitBase = await this.valueInBase(debtToken.address, estimatedProfit, debtToken.decimals);
+
+    if (estimatedProfitBase < this.minNetProfitBase) return null;
+
+    return {
+      useQuickSwap: dex.useQuickSwap,
+      dexName: dex.name,
+      estimatedProfit,
+      estimatedProfitBase,
+      collateralAmount
+    };
+  }
+
   // ============ FIND BEST LIQUIDATION PARAMS ============
-  async findBestParams(borrower) {
+  async findBestParams(borrower, healthFactor) {
     const tokenList  = Object.values(TOKENS);
     let bestOpp      = null;
     let bestProfit   = 0n;
@@ -143,6 +298,19 @@ class LiquidationBot {
           const totalDebt = debtReserveData.currentVariableDebt + debtReserveData.currentStableDebt;
           if (totalDebt === 0n) continue;
 
+          const closeFactorBps = healthFactor < CLOSE_FACTOR_HF_THRESHOLD ? BPS : 5000n;
+          const debtToCover = (totalDebt * closeFactorBps) / BPS;
+          if (debtToCover === 0n) continue;
+
+          const debtToCoverBase = await this.valueInBase(debtToken.address, debtToCover, debtToken.decimals);
+          if (debtToCoverBase < this.minDebtToCoverBase) continue;
+
+          const remainingDebt = totalDebt - debtToCover;
+          if (remainingDebt > 0n) {
+            const remainingDebtBase = await this.valueInBase(debtToken.address, remainingDebt, debtToken.decimals);
+            if (remainingDebtBase < this.minLeftoverDebtBase) continue;
+          }
+
           const collateralReserveData = await this.dataProvider.getUserReserveData(
             collToken.address, borrower
           );
@@ -154,29 +322,26 @@ class LiquidationBot {
             continue;
           }
 
-          const debtToCover = totalDebt / 2n;
-          if (debtToCover === 0n) continue;
+          const [quickSwapOpp, sushiSwapOpp] = await Promise.all([
+            this.estimateLiquidationRoute(collToken, debtToken, debtToCover, this.dexes.quickswap),
+            this.estimateLiquidationRoute(collToken, debtToken, debtToCover, this.dexes.sushiswap)
+          ]);
 
-          const [profitQS, isProfitableQS] = await this.botContract.estimateLiquidationProfit(
-            collToken.address, debtToken.address, debtToCover, true
-          );
+          const bestHere = [quickSwapOpp, sushiSwapOpp]
+            .filter(Boolean)
+            .sort((a, b) => (a.estimatedProfitBase > b.estimatedProfitBase ? -1 : 1))[0];
 
-          const [profitSS, isProfitableSS] = await this.botContract.estimateLiquidationProfit(
-            collToken.address, debtToken.address, debtToCover, false
-          );
-
-          const bestHere = profitQS > profitSS ? profitQS : profitSS;
-          const useQS    = profitQS >= profitSS;
-
-          if ((isProfitableQS || isProfitableSS) && bestHere > bestProfit) {
-            bestProfit = bestHere;
+          if (bestHere && bestHere.estimatedProfitBase > bestProfit) {
+            bestProfit = bestHere.estimatedProfitBase;
             bestOpp = {
               borrower,
               collateralAsset:  collToken.address,
               debtAsset:        debtToken.address,
               debtToCover,
-              useQuickSwap:     useQS,
-              estimatedProfit:  bestHere,
+              useQuickSwap:     bestHere.useQuickSwap,
+              dexName:          bestHere.dexName,
+              estimatedProfit:  bestHere.estimatedProfit,
+              estimatedProfitBase: bestHere.estimatedProfitBase,
               profitDecimals:   debtToken.decimals,
               debtSymbol:       this.sym(debtToken.address),
               collateralSymbol: this.sym(collToken.address)
@@ -194,12 +359,18 @@ class LiquidationBot {
     try {
       console.log(`\n🔥 Liquidating ${opp.borrower.slice(0, 10)}...`);
       console.log(`   Debt: ${opp.debtSymbol} | Collateral: ${opp.collateralSymbol}`);
-      console.log(`   DEX: ${opp.useQuickSwap ? "QuickSwap" : "SushiSwap"}`);
+      console.log(`   DEX: ${opp.dexName}`);
       console.log(`   Est. profit: ${this.formatAmount(opp.estimatedProfit, opp.profitDecimals, opp.debtSymbol)}`);
 
       const gasEst = await this.botContract.executeLiquidation.estimateGas(
         opp.collateralAsset, opp.debtAsset, opp.borrower, opp.debtToCover, opp.useQuickSwap
       );
+
+      const gasCostBase = await this.estimateGasCostBase(gasEst);
+      if (opp.estimatedProfitBase <= gasCostBase + this.minNetProfitBase) {
+        console.log(`   Skipped: profit after gas is below ${this.minNetProfitUsd} USD`);
+        return;
+      }
 
       const tx = await this.botContract.executeLiquidation(
         opp.collateralAsset, opp.debtAsset, opp.borrower, opp.debtToCover, opp.useQuickSwap,
@@ -224,12 +395,36 @@ class LiquidationBot {
 
     } catch (e) {
       this.errorCount++;
-      console.error(`❌ Failed: ${e.message}`);
+      console.error(`❌ Failed: ${this.describeError(e)}`);
     }
+  }
+
+  async estimateGasCostBase(gasEst) {
+    if (!this.gasPrice) return 0n;
+
+    const maticPrice = await this.priceOracle.getAssetPrice(TOKENS.WMATIC.address);
+    const gasWei = (gasEst * this.gasPrice * 130n) / 100n;
+    return (gasWei * maticPrice) / (10n ** 18n);
+  }
+
+  describeError(e) {
+    const data = e?.data || e?.info?.error?.data || e?.error?.data || e?.revert?.data;
+    const selector = typeof data === "string" ? data.slice(0, 10).toLowerCase() : "";
+    const decoded = ERROR_SELECTORS[selector];
+
+    if (decoded) {
+      return `${decoded} (${selector})`;
+    }
+
+    return e.shortMessage || e.message;
   }
 
   // ============ MONITOR ============
   async monitorOpportunities() {
+    if (!this.priceOracle) {
+      await this.initialize();
+    }
+
     console.log("👀 Liquidation bot started (Hybrid mode)");
     console.log(`   Wallet   : ${this.wallet.address}`);
     console.log(`   Contract : ${await this.botContract.getAddress()}`);
@@ -254,6 +449,14 @@ class LiquidationBot {
       if (blockNumber <= this.lastBlock) return;
       this.lastBlock = blockNumber;
 
+      if (this.isScanning) {
+        console.log(`📦 Block ${blockNumber} | Skipped: previous scan still running`);
+        return;
+      }
+
+      this.isScanning = true;
+
+      try {
       // Refresh borrower list every 5 minutes
       if (Date.now() - this.lastSubgraphFetch > 300000) {
         this.borrowerList = await this.fetchBorrowers();
@@ -294,9 +497,9 @@ class LiquidationBot {
         const hf = (Number(healthFactor) / 1e18).toFixed(4);
         console.log(`   Checking ${user.slice(0, 10)}... HF: ${hf}`);
 
-        const opp = await this.findBestParams(user);
-        if (opp && opp.estimatedProfit > bestProfit) {
-          bestProfit = opp.estimatedProfit;
+        const opp = await this.findBestParams(user, healthFactor);
+        if (opp && opp.estimatedProfitBase > bestProfit) {
+          bestProfit = opp.estimatedProfitBase;
           bestOpp    = opp;
         }
       }
@@ -306,6 +509,12 @@ class LiquidationBot {
         await this.executeLiquidation(bestOpp);
       } else {
         console.log("   At-risk positions found but none profitable");
+      }
+      } catch (e) {
+        this.errorCount++;
+        console.error(`❌ Scan failed: ${this.describeError(e)}`);
+      } finally {
+        this.isScanning = false;
       }
     });
   }
