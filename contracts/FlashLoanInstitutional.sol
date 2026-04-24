@@ -79,6 +79,7 @@ contract FlashLoanInstitutional is IUniswapV2Callee, ReentrancyGuard, Ownable2St
     error CircuitBreakerActive();
     error RecursionDepthExceeded();
     error InsufficientLiquidity();
+    error OraclePriceAnomaly(uint256 deviationBps);
 
     constructor(
         address _factory,
@@ -135,9 +136,7 @@ contract FlashLoanInstitutional is IUniswapV2Callee, ReentrancyGuard, Ownable2St
         }
         
         // Validate oracle prices
-        if (!_validateOraclePrices(_token)) {
-            return;
-        }
+        _validateOraclePrices(_token);
 
         // Check daily volume
         _checkDailyVolume(_amount);
@@ -162,8 +161,8 @@ contract FlashLoanInstitutional is IUniswapV2Callee, ReentrancyGuard, Ownable2St
     
     function uniswapV2Call(
         address _sender,
-        uint256 _amount0,
-        uint256 _amount1,
+        uint256,
+        uint256,
         bytes calldata _data
     ) external override {
         // Validate callback
@@ -175,7 +174,7 @@ contract FlashLoanInstitutional is IUniswapV2Callee, ReentrancyGuard, Ownable2St
         if (_sender != address(this)) revert UnauthorizedCallback();
         
         // Decode parameters
-        (address token, uint256 amount, uint256 slippageBps, uint256 gasStart, address initiator) = 
+        (address token, uint256 amount, uint256 slippageBps, , address initiator) =
             abi.decode(_data, (address, uint256, uint256, uint256, address));
         
         // Calculate fees
@@ -218,7 +217,7 @@ contract FlashLoanInstitutional is IUniswapV2Callee, ReentrancyGuard, Ownable2St
         try IAggregatorV3(oracle).latestRoundData() returns (
             uint80 roundId,
             int256 price,
-            uint256 startedAt,
+            uint256,
             uint256 updatedAt,
             uint80 answeredInRound
         ) {
@@ -330,21 +329,18 @@ contract FlashLoanInstitutional is IUniswapV2Callee, ReentrancyGuard, Ownable2St
         dailyVolumeUsed += amount;
     }
     
-    function _validateOraclePrices(address token) private returns (bool) {
+    function _validateOraclePrices(address token) private {
         uint256 currentPrice = getValidatedPrice(token);
         uint256 lastPrice = assetLastPrice[token];
-        
+
         if (lastPrice > 0) {
             uint256 deviation = _calculatePriceDeviation(currentPrice, lastPrice);
             if (deviation > ORACLE_DEVIATION_THRESHOLD) {
-                circuitBreakerActive = true;
-                emit CircuitBreakerTriggered("Price anomaly", ORACLE_DEVIATION_THRESHOLD, deviation);
-                return false;
+                revert OraclePriceAnomaly(deviation);
             }
         }
-        
+
         assetLastPrice[token] = currentPrice;
-        return true;
     }
     
     function _validateLiquidity(address pair, address token, uint256 amount) private view {

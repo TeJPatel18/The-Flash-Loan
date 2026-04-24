@@ -1,4 +1,5 @@
-const { ethers } = require("hardhat");
+const hre = require("hardhat");
+const { ethers } = hre;
 
 // Polygon Mainnet addresses
 const POLYGON_ADDRESSES = {
@@ -88,8 +89,8 @@ async function setupTestEnvironment(signer, tokenAddresses, holderAddresses) {
 
 
     // Transfer some tokens to signer (if holder has enough)
-    if (balance.gt(ethers.utils.parseUnits("1000", decimals))) {
-      const transferAmount = ethers.utils.parseUnits("1000", decimals);
+    if (balance > ethers.parseUnits("1000", decimals)) {
+      const transferAmount = ethers.parseUnits("1000", decimals);
       await token.connect(holder).transfer(signerAddress, transferAmount);
 
     }

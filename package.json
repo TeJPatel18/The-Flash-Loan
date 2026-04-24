@@ -1,15 +1,14 @@
 {
-  "name": "flashloan-institutional",
+  "name": "polygon-liquidation-bot",
   "version": "1.0.0",
-  "description": "Institutional-grade flash loan contract with advanced security features",
+  "description": "Aave V3 flash-loan liquidation bot for Polygon",
   "main": "index.js",
   "scripts": {
     "test": "hardhat test",
     "compile": "hardhat compile",
-    "deploy": "hardhat run scripts/deploy-institutional.js",
-    "deploy:testnet": "hardhat run scripts/deploy-institutional.js --network bscTestnet",
-    "deploy:mainnet": "hardhat run scripts/deploy-institutional.js --network bsc",
-    "deploy:polygon": "hardhat run scripts/deploy-polygon.js --network polygon",
+    "deploy": "hardhat run scripts/deploy-liquidation.js",
+    "deploy:amoy": "hardhat run scripts/deploy-liquidation.js --network amoy",
+    "deploy:polygon": "hardhat run scripts/deploy-liquidation.js --network polygon",
     "deploy:liquidation:polygon": "hardhat run scripts/deploy-liquidation.js --network polygon",
     "bot:liquidation": "npm --prefix bot run start:liquidation",
     "verify": "hardhat verify",
@@ -21,7 +20,7 @@
   "keywords": [
     "defi",
     "flash-loan",
-    "arbitrage",
+    "liquidation",
     "security",
     "institutional",
     "smart-contracts",
@@ -43,8 +42,6 @@
   },
   "dependencies": {
     "@openzeppelin/contracts": "^5.0.0",
-    "@uniswap/sdk-core": "^5.0.0",
-    "@uniswap/v3-sdk": "^3.10.0",
     "dotenv": "^17.4.2"
   }
 }

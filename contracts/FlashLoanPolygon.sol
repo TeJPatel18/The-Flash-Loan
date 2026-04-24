@@ -85,6 +85,7 @@ contract FlashLoanPolygon is IUniswapV2Callee, ReentrancyGuard, Ownable, Pausabl
     error RecursionDepthExceeded();
     error InsufficientLiquidity();
     error RouterNotSupported();
+    error OraclePriceAnomaly(uint256 deviationBps);
 
     constructor(
         address _factory,
@@ -148,9 +149,7 @@ contract FlashLoanPolygon is IUniswapV2Callee, ReentrancyGuard, Ownable, Pausabl
         }
         
         // Validate oracle prices
-        if (!_validateOraclePrices(_token)) {
-            return;
-        }
+        _validateOraclePrices(_token);
 
         // Check daily volume
         _checkDailyVolume(_amount);
@@ -176,14 +175,12 @@ contract FlashLoanPolygon is IUniswapV2Callee, ReentrancyGuard, Ownable, Pausabl
     /**
      * @dev UniswapV2-compatible flash loan callback optimized for Polygon
      * @param _sender Address that initiated the swap
-     * @param _amount0 Amount of token0 borrowed
-     * @param _amount1 Amount of token1 borrowed
      * @param _data Encoded data containing arbitrage parameters
      */
     function uniswapV2Call(
         address _sender,
-        uint256 _amount0,
-        uint256 _amount1,
+        uint256,
+        uint256,
         bytes calldata _data
     ) external override {
         // Validate callback
@@ -195,7 +192,7 @@ contract FlashLoanPolygon is IUniswapV2Callee, ReentrancyGuard, Ownable, Pausabl
         if (_sender != address(this)) revert UnauthorizedCallback();
         
         // Decode parameters
-        (address token, uint256 amount, uint256 slippageBps, uint256 gasStart, address initiator) = 
+        (address token, uint256 amount, uint256 slippageBps, , address initiator) =
             abi.decode(_data, (address, uint256, uint256, uint256, address));
         
         // Calculate fees
@@ -248,6 +245,8 @@ contract FlashLoanPolygon is IUniswapV2Callee, ReentrancyGuard, Ownable, Pausabl
         address[] calldata _routers,
         address[][] calldata _paths
     ) external nonReentrant whenNotPaused returns (uint256) {
+        if (circuitBreakerActive) revert CircuitBreakerActive();
+
         require(_routers.length == _paths.length, "Router and path length mismatch");
         
         uint256 currentAmount = _amount;
@@ -303,7 +302,7 @@ contract FlashLoanPolygon is IUniswapV2Callee, ReentrancyGuard, Ownable, Pausabl
         try IAggregatorV3(oracle).latestRoundData() returns (
             uint80 roundId,
             int256 price,
-            uint256 startedAt,
+            uint256,
             uint256 updatedAt,
             uint80 answeredInRound
         ) {
@@ -484,21 +483,18 @@ contract FlashLoanPolygon is IUniswapV2Callee, ReentrancyGuard, Ownable, Pausabl
      * @dev Validate oracle prices
      * @param token Token to validate
      */
-    function _validateOraclePrices(address token) private returns (bool) {
+    function _validateOraclePrices(address token) private {
         uint256 currentPrice = getValidatedPrice(token);
         uint256 lastPrice = assetLastPrice[token];
-        
+
         if (lastPrice > 0) {
             uint256 deviation = _calculatePriceDeviation(currentPrice, lastPrice);
             if (deviation > ORACLE_DEVIATION_THRESHOLD) {
-                circuitBreakerActive = true;
-                emit CircuitBreakerTriggered("Price anomaly", ORACLE_DEVIATION_THRESHOLD, deviation);
-                return false;
+                revert OraclePriceAnomaly(deviation);
             }
         }
-        
+
         assetLastPrice[token] = currentPrice;
-        return true;
     }
     
     /**

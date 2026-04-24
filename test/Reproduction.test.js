@@ -167,7 +167,7 @@ describe("Vulnerability Reproduction", function () {
             expect(await CAKE.allowance(flashLoan.target, mockRouter.target)).to.equal(ethers.MaxUint256);
         });
 
-        it("FlashLoanInstitutional should latch circuit breaker on oracle anomaly", async function () {
+        it("FlashLoanInstitutional should revert loudly on oracle anomaly and let keeper latch breaker", async function () {
             const FlashLoanInstitutional = await ethers.getContractFactory("FlashLoanInstitutional");
             const MockOracle = await ethers.getContractFactory("MockOracle");
             const mockOracle = await MockOracle.deploy();
@@ -189,15 +189,17 @@ describe("Vulnerability Reproduction", function () {
             await mockOracle.setPrice(parseUnits("2", 8));
             await expect(
                 flashLoan.connect(user).initiateFlashLoan(BUSD.target, parseEther("100"), 500)
-            ).to.emit(flashLoan, "CircuitBreakerTriggered");
+            ).to.be.revertedWithCustomError(flashLoan, "OraclePriceAnomaly").withArgs(5000);
 
+            expect(await flashLoan.circuitBreakerActive()).to.equal(false);
+            await flashLoan.connect(owner).triggerCircuitBreaker("Price anomaly");
             expect(await flashLoan.circuitBreakerActive()).to.equal(true);
             await expect(
                 flashLoan.connect(user).initiateFlashLoan(BUSD.target, parseEther("100"), 500)
             ).to.be.revertedWithCustomError(flashLoan, "CircuitBreakerActive");
         });
 
-        it("FlashLoanPolygon should latch circuit breaker on oracle anomaly", async function () {
+        it("FlashLoanPolygon should revert loudly on oracle anomaly and let keeper latch breaker", async function () {
             const FlashLoanPolygon = await ethers.getContractFactory("FlashLoanPolygon");
             const MockOracle = await ethers.getContractFactory("MockOracle");
             const mockOracle = await MockOracle.deploy();
@@ -219,8 +221,10 @@ describe("Vulnerability Reproduction", function () {
             await mockOracle.setPrice(parseUnits("2", 8));
             await expect(
                 flashLoan.connect(user).initiateFlashLoan(BUSD.target, parseUnits("1000", 6), 500)
-            ).to.emit(flashLoan, "CircuitBreakerTriggered");
+            ).to.be.revertedWithCustomError(flashLoan, "OraclePriceAnomaly").withArgs(5000);
 
+            expect(await flashLoan.circuitBreakerActive()).to.equal(false);
+            await flashLoan.connect(owner).triggerCircuitBreaker("Price anomaly");
             expect(await flashLoan.circuitBreakerActive()).to.equal(true);
             await expect(
                 flashLoan.connect(user).initiateFlashLoan(BUSD.target, parseUnits("1000", 6), 500)

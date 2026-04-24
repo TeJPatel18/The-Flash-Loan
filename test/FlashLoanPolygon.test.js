@@ -216,6 +216,14 @@ describe("FlashLoanPolygon", function () {
       expect(await flashLoan.supportedRouters(newRouter)).to.equal(true);
     });
 
+    it("Should prevent multi-DEX arbitrage when circuit breaker is active", async function () {
+      await flashLoan.connect(owner).triggerCircuitBreaker("Test reason");
+
+      await expect(
+        flashLoan.connect(user).executeMultiDexArbitrage(USDC, parseUnits("1000", 6), 500, [], [])
+      ).to.be.revertedWithCustomError(flashLoan, "CircuitBreakerActive");
+    });
+
     it("Should reject invalid router addresses", async function () {
       await expect(
         flashLoan.connect(owner).addSupportedRouter(ethers.ZeroAddress)
