@@ -46,6 +46,16 @@ GRAPH_API_KEY=your_graph_api_key
 
 The bot wallet must be the same wallet that deployed `LiquidationBot`, because only the owner can execute liquidations.
 
+Optional bot speed controls for `bot/.env`:
+
+```env
+BORROWER_FETCH_LIMIT=500
+SCAN_INTERVAL_SECONDS=30
+UNPROFITABLE_COOLDOWN_SECONDS=900
+DEBT_TOKENS=USDCe,USDC,USDT,DAI
+COLLATERAL_TOKENS=WBTC,WETH,WMATIC,AAVE,LINK,DAI,USDCe,USDC,USDT
+```
+
 ## Deploy
 
 Polygon mainnet:

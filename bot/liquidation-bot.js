@@ -17,6 +17,15 @@ const SUBGRAPH_URL  = `https://gateway.thegraph.com/api/${GRAPH_API_KEY}/subgrap
 const CLOSE_FACTOR_HF_THRESHOLD = ethers.parseEther("0.95");
 const BPS = 10000n;
 
+function numberEnv(name, fallback) {
+  const value = Number(process.env[name] || fallback);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+const BORROWER_FETCH_LIMIT = Math.min(Math.max(numberEnv("BORROWER_FETCH_LIMIT", 500), 1), 1000);
+const SCAN_INTERVAL_MS = Math.max(numberEnv("SCAN_INTERVAL_SECONDS", 30), 5) * 1000;
+const UNPROFITABLE_COOLDOWN_MS = Math.max(numberEnv("UNPROFITABLE_COOLDOWN_SECONDS", 900), 30) * 1000;
+
 // ============ TOKENS ============
 const TOKENS = {
   USDCe:  { address: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", decimals: 6  },
@@ -29,6 +38,19 @@ const TOKENS = {
   AAVE:   { address: "0xD6DF932A45C0f255f85145f286eA0b292B21C90B", decimals: 18 },
   LINK:   { address: "0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39", decimals: 18 },
 };
+
+const TOKEN_KEYS = Object.fromEntries(Object.keys(TOKENS).map((key) => [key.toUpperCase(), key]));
+
+function tokenListFromEnv(name, fallback) {
+  return (process.env[name] || fallback)
+    .split(",")
+    .map((symbol) => TOKEN_KEYS[symbol.trim().toUpperCase()])
+    .filter(Boolean)
+    .map((symbol) => ({ symbol, ...TOKENS[symbol] }));
+}
+
+const DEBT_TOKENS = tokenListFromEnv("DEBT_TOKENS", "USDCe,USDC,USDT,DAI");
+const COLLATERAL_TOKENS = tokenListFromEnv("COLLATERAL_TOKENS", "WBTC,WETH,WMATIC,AAVE,LINK,DAI,USDCe,USDC,USDT");
 
 // ============ ABIs ============
 const POOL_ABI = [
@@ -74,11 +96,11 @@ const ERROR_SELECTORS = {
 };
 
 // ============ SUBGRAPH QUERY ============
-// Get top 500 active borrowers sorted by debt size
+// Get active borrowers sorted by debt size
 const BORROWERS_QUERY = `
 {
   positions(
-    first: 500
+    first: ${BORROWER_FETCH_LIMIT}
     where: { debt_gt: "0" }
     orderBy: debt
     orderDirection: desc
@@ -122,6 +144,8 @@ class LiquidationBot {
     this.gasPrice        = 0n;
     this.lastBlock       = 0;
     this.isScanning      = false;
+    this.lastScanStartedAt = 0;
+    this.borrowerCooldowns = new Map();
     this.totalProfitByToken = new Map();
     this.txCount         = 0;
     this.errorCount      = 0;
@@ -155,6 +179,8 @@ class LiquidationBot {
 
     console.log(`   Aave oracle: ${oracleAddress}`);
     console.log(`   Min debt to cover: ${this.minDebtToCoverUsd} USD | Min net profit: ${this.minNetProfitUsd} USD`);
+    console.log(`   Borrowers: ${BORROWER_FETCH_LIMIT} | Scan interval: ${SCAN_INTERVAL_MS / 1000}s | Cooldown: ${UNPROFITABLE_COOLDOWN_MS / 1000}s`);
+    console.log(`   Debt tokens: ${DEBT_TOKENS.map((t) => t.symbol).join(", ")} | Collateral tokens: ${COLLATERAL_TOKENS.map((t) => t.symbol).join(", ")}`);
   }
 
   decimalsFromUnit(unit) {
@@ -211,6 +237,27 @@ class LiquidationBot {
     } catch {
       return null;
     }
+  }
+
+  borrowerKey(user) {
+    return user.toLowerCase();
+  }
+
+  isBorrowerCoolingDown(user) {
+    const key = this.borrowerKey(user);
+    const until = this.borrowerCooldowns.get(key) || 0;
+
+    if (until <= Date.now()) {
+      this.borrowerCooldowns.delete(key);
+      return false;
+    }
+
+    return true;
+  }
+
+  cooldownBorrower(user, reason) {
+    this.borrowerCooldowns.set(this.borrowerKey(user), Date.now() + UNPROFITABLE_COOLDOWN_MS);
+    console.log(`   Cooling down ${user.slice(0, 10)}... (${reason})`);
   }
 
   async valueInBase(asset, amount, decimals) {
@@ -282,12 +329,11 @@ class LiquidationBot {
 
   // ============ FIND BEST LIQUIDATION PARAMS ============
   async findBestParams(borrower, healthFactor) {
-    const tokenList  = Object.values(TOKENS);
     let bestOpp      = null;
     let bestProfit   = 0n;
 
-    for (const debtToken of tokenList) {
-      for (const collToken of tokenList) {
+    for (const debtToken of DEBT_TOKENS) {
+      for (const collToken of COLLATERAL_TOKENS) {
         if (debtToken.address === collToken.address) continue;
 
         try {
@@ -369,7 +415,8 @@ class LiquidationBot {
       const gasCostBase = await this.estimateGasCostBase(gasEst);
       if (opp.estimatedProfitBase <= gasCostBase + this.minNetProfitBase) {
         console.log(`   Skipped: profit after gas is below ${this.minNetProfitUsd} USD`);
-        return;
+        this.cooldownBorrower(opp.borrower, "profit after gas too low");
+        return false;
       }
 
       const tx = await this.botContract.executeLiquidation(
@@ -393,9 +440,13 @@ class LiquidationBot {
 
       console.log(`📊 Liquidations: ${this.txCount} | ${opp.debtSymbol} profit: ${this.formatAmount(totalForToken, opp.profitDecimals, opp.debtSymbol)}`);
 
+      return true;
+
     } catch (e) {
       this.errorCount++;
       console.error(`❌ Failed: ${this.describeError(e)}`);
+      this.cooldownBorrower(opp.borrower, "execution failed");
+      return false;
     }
   }
 
@@ -449,12 +500,14 @@ class LiquidationBot {
       if (blockNumber <= this.lastBlock) return;
       this.lastBlock = blockNumber;
 
+      if (Date.now() - this.lastScanStartedAt < SCAN_INTERVAL_MS) return;
+
       if (this.isScanning) {
-        console.log(`📦 Block ${blockNumber} | Skipped: previous scan still running`);
         return;
       }
 
       this.isScanning = true;
+      this.lastScanStartedAt = Date.now();
 
       try {
       // Refresh borrower list every 5 minutes
@@ -479,6 +532,13 @@ class LiquidationBot {
 
       await Promise.all(checks);
 
+      const cooldownCount = atRisk.filter(({ user }) => this.isBorrowerCoolingDown(user)).length;
+      atRisk = atRisk.filter(({ user }) => !this.isBorrowerCoolingDown(user));
+
+      if (cooldownCount > 0) {
+        console.log(`   Skipped ${cooldownCount} cooling-down borrower(s)`);
+      }
+
       if (atRisk.length === 0) {
         console.log("   No at-risk positions");
         return;
@@ -501,6 +561,8 @@ class LiquidationBot {
         if (opp && opp.estimatedProfitBase > bestProfit) {
           bestProfit = opp.estimatedProfitBase;
           bestOpp    = opp;
+        } else if (!opp) {
+          this.cooldownBorrower(user, "no profitable route");
         }
       }
 
