@@ -3,9 +3,9 @@
 [![Hardhat](https://img.shields.io/badge/Hardhat-2.26.3-orange.svg)](https://hardhat.org/)
 [![Polygon](https://img.shields.io/badge/Polygon-137-blueviolet.svg)](https://polygon.technology/)
 
-# 🚀 Flash Loan Arbitrage Bot for Polygon
+# Flash Loan Liquidation Bot for Polygon
 
-This project is an institutional-grade flash loan arbitrage system specifically designed for the Polygon network. It enables capital-efficient trading without upfront funds by leveraging flash loans across multiple DEXs including QuickSwap and SushiSwap.
+This project is focused on Aave V3 liquidation execution on Polygon. It uses Aave flash loans to repay unhealthy borrower debt, receives collateral, swaps that collateral back to the debt token, repays the flash loan, and sends remaining profit to the owner wallet.
 
 ## 📋 Table of Contents
 
@@ -26,12 +26,12 @@ This project is an institutional-grade flash loan arbitrage system specifically 
 
 ## 🔍 Overview
 
-The Flash Loan Arbitrage Bot for Polygon enables automated arbitrage opportunities across Polygon's DEX ecosystem. The system is optimized for Polygon's lower gas costs and faster block times while maintaining enterprise-grade security features.
+The active bot monitors Aave V3 borrower positions on Polygon, checks health factors, estimates liquidation routes through QuickSwap or SushiSwap, and submits only owner-controlled liquidation transactions.
 
 ### Key Features
 
-- **Multi-DEX Arbitrage**: Supports QuickSwap, SushiSwap, and other Polygon DEXs
-- **Real-time Monitoring**: Node.js/TypeScript bot for continuous opportunity scanning
+- **Aave Liquidations**: Uses Aave V3 flash loans and liquidation calls
+- **Real-time Monitoring**: Node.js bot for continuous borrower health scanning
 - **Risk Management**: Circuit breakers, daily volume limits, and asset risk configurations
 - **Gas Optimization**: Optimized for Polygon's lower transaction costs
 - **Oracle Integration**: Chainlink price feeds for secure price validation
@@ -41,13 +41,12 @@ The Flash Loan Arbitrage Bot for Polygon enables automated arbitrage opportuniti
 
 ```mermaid
 graph TD
-    A[Arbitrage Bot] --> B[FlashLoanPolygon Contract]
-    B --> C[PriceOraclePolygon Contract]
-    C --> D[QuickSwap]
-    C --> E[SushiSwap]
-    C --> F[Chainlink Oracle]
-    B --> G[Risk Management]
-    B --> H[Security Controls]
+    A[Liquidation Bot] --> B[LiquidationBot Contract]
+    B --> C[Aave V3 Pool]
+    B --> D[QuickSwap]
+    B --> E[SushiSwap]
+    A --> F[The Graph]
+    A --> G[Aave Data Provider]
 ```
 
 ### Core Components
@@ -56,7 +55,7 @@ graph TD
 2. **FlashLoanPolygon.sol**: Polygon-optimized flash loan contract.
 3. **PriceOraclePolygon.sol**: Price oracle for multi-DEX price feeds.
 4. **MockOracle.sol**: Mock Chainlink oracle for testing.
-5. **Arbitrage Bot**: JavaScript/TypeScript implementation for monitoring and execution.
+5. **Liquidation Bot**: JavaScript implementation for Aave borrower monitoring and liquidation execution.
 6. **Deployment Scripts**: Scripts for Polygon mainnet and supported testnet configuration.
 
 ## 🔒 Security Analysis
@@ -90,13 +89,13 @@ Mock Chainlink oracle for local and testnet simulations.
 
 ## 🤖 Bot Implementation
 
-The arbitrage bot is implemented in both JavaScript and TypeScript:
+The active bot is implemented in JavaScript:
 
-- **Real-time Monitoring**: Monitors new blocks for arbitrage opportunities
-- **Multi-DEX Scanning**: Scans multiple DEXs for price discrepancies
-- **Profit Calculation**: Calculates profitability including gas costs
-- **Auto-execution**: Automatically executes profitable trades
-- **Risk Management**: Stops execution when gas costs exceed potential profits
+- **Real-time Monitoring**: Monitors new blocks and Aave borrower health factors
+- **Collateral Filtering**: Checks borrower collateral balances and collateral-enabled status
+- **Profit Estimation**: Estimates QuickSwap and SushiSwap liquidation routes
+- **Auto-execution**: Executes profitable liquidations through the deployed `LiquidationBot`
+- **Risk Management**: Requires the configured wallet to own the deployed contract
 
 ## 🚀 Installation
 
@@ -186,9 +185,11 @@ POLYGON_RPC_URL=https://polygon-rpc.com/
 # Wallet private key (keep this secret!)
 PRIVATE_KEY=your_private_key_here
 
-# Contract addresses (deployed contracts)
-FLASH_LOAN_ADDRESS=your_flash_loan_contract_address_here
-PRICE_ORACLE_ADDRESS=your_price_oracle_contract_address_here
+# Contract address (deployed LiquidationBot)
+LIQUIDATION_BOT_ADDRESS=your_liquidation_bot_contract_address_here
+
+# The Graph API key for borrower discovery
+GRAPH_API_KEY=your_graph_api_key_here
 
 # Explorer API keys for verification
 POLYGONSCAN_API_KEY=your_polygonscan_api_key_here
@@ -218,7 +219,7 @@ npx hardhat compile
 
 ```bash
 # For Polygon mainnet
-npx hardhat run scripts/deploy-polygon.js --network polygon
+npx hardhat run scripts/deploy-liquidation.js --network polygon
 ```
 
 ### 3. Run the Bot

@@ -18,6 +18,7 @@ contract PriceOraclePolygon {
         address factory;
         address router;
         string name;
+        uint256 feeBps;
         bool isActive;
     }
     
@@ -44,11 +45,12 @@ contract PriceOraclePolygon {
     
     // ============ MUTABLE STORAGE ============
     mapping(string => DexInfo) public dexInfos;
+    string[] public dexNames;
     mapping(address => mapping(address => TwapObservation[])) public twapObservations; // tokenA => tokenB => observations
     mapping(address => address) public chainlinkOracles; // token => oracle
     
     // ============ EVENTS ============
-    event DexAdded(string name, address factory, address router);
+    event DexAdded(string name, address factory, address router, uint256 feeBps);
     event DexRemoved(string name);
     event PriceUpdated(address tokenA, address tokenB, uint256 price, uint256 twapPrice);
     event OracleAdded(address token, address oracle);
@@ -63,8 +65,8 @@ contract PriceOraclePolygon {
         owner = msg.sender;
         
         // Initialize with common Polygon DEXs
-        _addDex("QuickSwap", 0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32, 0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff);
-        _addDex("SushiSwap", 0xc35DADB65012eC5796536bD9864eD8773aBc74C4, 0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506);
+        _addDex("QuickSwap", 0x5757371414417b8C6CAad45bAeF941aBc7d3Ab32, 0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff, 30);
+        _addDex("SushiSwap", 0xc35DADB65012eC5796536bD9864eD8773aBc74C4, 0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506, 30);
     }
 
     // ============ PUBLIC FUNCTIONS ============
@@ -100,9 +102,9 @@ contract PriceOraclePolygon {
         (uint112 reserve0, uint112 reserve1,) = IUniswapV2Pair(pair).getReserves();
         
         if (tokenA < tokenB) {
-            amounts[1] = _getAmount(amountIn, reserve0, reserve1);
+            amounts[1] = _getAmount(amountIn, reserve0, reserve1, dex.feeBps);
         } else {
-            amounts[1] = _getAmount(amountIn, reserve1, reserve0);
+            amounts[1] = _getAmount(amountIn, reserve1, reserve0, dex.feeBps);
         }
         
         return amounts[1];
@@ -148,7 +150,7 @@ contract PriceOraclePolygon {
         try IAggregatorV3(oracle).latestRoundData() returns (
             uint80 roundId,
             int256 priceInt,
-            uint256 startedAt,
+            uint256,
             uint256 updatedAt,
             uint80 answeredInRound
         ) {
@@ -180,31 +182,35 @@ contract PriceOraclePolygon {
         uint256 priceDifference
     ) {
         uint256 bestDexPrice = 0;
+        uint256 worstDexPrice = type(uint256).max;
+        uint256 activePriceCount = 0;
         string memory bestDexName = "";
         
-        // Check all active DEXs
-        for (uint256 i = 0; i < 10; i++) {
-            // This is a simplified approach - in practice, you'd iterate through all DEXs
-            string[10] memory dexNames = ["QuickSwap", "SushiSwap", "ApeSwap", "DFYN", "Cometh", "JetSwap", "Polydex", "WaultSwap", "Polycat", "HyperJump"];
-            
-            if (i >= dexNames.length) break;
-            
+        for (uint256 i = 0; i < dexNames.length; i++) {
             string memory dexName = dexNames[i];
             DexInfo memory dex = dexInfos[dexName];
             
             if (dex.isActive) {
                 try this.getPrice(dexName, tokenA, tokenB, amountIn) returns (uint256 price) {
+                    activePriceCount++;
                     if (price > bestDexPrice) {
                         bestDexPrice = price;
                         bestDexName = dexName;
+                    }
+                    if (price < worstDexPrice) {
+                        worstDexPrice = price;
                     }
                 } catch {
                     // Skip DEX if price calculation fails
                 }
             }
         }
-        
-        return (bestDexName, bestDexPrice, 0); // Simplified - would calculate price difference in full implementation
+
+        if (activePriceCount < 2 || bestDexPrice <= worstDexPrice) {
+            return (bestDexName, bestDexPrice, 0);
+        }
+
+        return (bestDexName, bestDexPrice, bestDexPrice - worstDexPrice);
     }
 
     // ============ OWNER FUNCTIONS ============
@@ -220,7 +226,23 @@ contract PriceOraclePolygon {
         address factory,
         address router
     ) external onlyOwner {
-        _addDex(name, factory, router);
+        _addDex(name, factory, router, 30);
+    }
+
+    /**
+     * @dev Add a new DEX with a custom swap fee.
+     * @param name DEX name
+     * @param factory Factory address
+     * @param router Router address
+     * @param feeBps Swap fee in basis points
+     */
+    function addDexWithFee(
+        string memory name,
+        address factory,
+        address router,
+        uint256 feeBps
+    ) external onlyOwner {
+        _addDex(name, factory, router, feeBps);
     }
     
     /**
@@ -228,7 +250,8 @@ contract PriceOraclePolygon {
      * @param name DEX name
      */
     function removeDex(string memory name) external onlyOwner {
-        delete dexInfos[name];
+        require(dexInfos[name].isActive, "DEX not active");
+        dexInfos[name].isActive = false;
         emit DexRemoved(name);
     }
     
@@ -273,19 +296,26 @@ contract PriceOraclePolygon {
     function _addDex(
         string memory name,
         address factory,
-        address router
+        address router,
+        uint256 feeBps
     ) internal {
         require(factory != address(0), "Invalid factory");
         require(router != address(0), "Invalid router");
+        require(feeBps < BASIS_POINTS, "Invalid fee");
+
+        if (bytes(dexInfos[name].name).length == 0) {
+            dexNames.push(name);
+        }
         
         dexInfos[name] = DexInfo({
             factory: factory,
             router: router,
             name: name,
+            feeBps: feeBps,
             isActive: true
         });
         
-        emit DexAdded(name, factory, router);
+        emit DexAdded(name, factory, router, feeBps);
     }
     
     /**
@@ -298,14 +328,15 @@ contract PriceOraclePolygon {
     function _getAmount(
         uint256 amountIn,
         uint256 reserveIn,
-        uint256 reserveOut
+        uint256 reserveOut,
+        uint256 feeBps
     ) internal pure returns (uint256 amountOut) {
         require(amountIn > 0, "INSUFFICIENT_INPUT_AMOUNT");
         require(reserveIn > 0 && reserveOut > 0, "INSUFFICIENT_LIQUIDITY");
         
-        uint256 amountInWithFee = amountIn * 997;
+        uint256 amountInWithFee = amountIn * (BASIS_POINTS - feeBps);
         uint256 numerator = amountInWithFee * reserveOut;
-        uint256 denominator = reserveIn * 1000 + amountInWithFee;
+        uint256 denominator = reserveIn * BASIS_POINTS + amountInWithFee;
         amountOut = numerator / denominator;
     }
     

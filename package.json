@@ -12,7 +12,6 @@
     "deploy:polygon": "hardhat run scripts/deploy-polygon.js --network polygon",
     "deploy:liquidation:polygon": "hardhat run scripts/deploy-liquidation.js --network polygon",
     "bot:liquidation": "npm --prefix bot run start:liquidation",
-    "bot:arbitrage": "npm --prefix bot run start:arbitrage",
     "verify": "hardhat verify",
     "coverage": "hardhat coverage",
     "gas": "REPORT_GAS=true hardhat test",

@@ -6,7 +6,6 @@
   "scripts": {
     "start": "node liquidation-bot.js",
     "start:liquidation": "node liquidation-bot.js",
-    "start:arbitrage": "node arbitrage-bot.js",
     "dev": "nodemon liquidation-bot.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

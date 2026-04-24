@@ -10,7 +10,8 @@ const SUBGRAPH_URL  = `https://gateway.thegraph.com/api/${GRAPH_API_KEY}/subgrap
 
 // ============ TOKENS ============
 const TOKENS = {
-  USDC:   { address: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", decimals: 6  },
+  USDCe:  { address: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", decimals: 6  },
+  USDC:   { address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", decimals: 6  },
   USDT:   { address: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", decimals: 6  },
   DAI:    { address: "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063", decimals: 18 },
   WETH:   { address: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619", decimals: 18 },
