@@ -1,16 +1,18 @@
 {
-  "name": "flashloan-arbitrage-bot",
+  "name": "flashloan-liquidation-bot",
   "version": "1.0.0",
-  "description": "Polygon flash loan arbitrage bot",
-  "main": "arbitrage-bot.js",
+  "description": "Polygon Aave liquidation bot",
+  "main": "liquidation-bot.js",
   "scripts": {
-    "start": "node arbitrage-bot.js",
-    "dev": "nodemon arbitrage-bot.js",
+    "start": "node liquidation-bot.js",
+    "start:liquidation": "node liquidation-bot.js",
+    "start:arbitrage": "node arbitrage-bot.js",
+    "dev": "nodemon liquidation-bot.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
     "defi",
-    "arbitrage",
+    "liquidation",
     "flash-loan",
     "polygon",
     "matic"
