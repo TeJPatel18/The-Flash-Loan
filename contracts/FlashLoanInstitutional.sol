@@ -134,11 +134,13 @@ contract FlashLoanInstitutional is IUniswapV2Callee, ReentrancyGuard, Ownable2St
             revert RecursionDepthExceeded();
         }
         
+        // Validate oracle prices
+        if (!_validateOraclePrices(_token)) {
+            return;
+        }
+
         // Check daily volume
         _checkDailyVolume(_amount);
-        
-        // Validate oracle prices
-        _validateOraclePrices(_token);
         
         // Get pair and validate liquidity
         address pair = IUniswapV2Factory(factory).getPair(_token, WBNB);
@@ -328,20 +330,21 @@ contract FlashLoanInstitutional is IUniswapV2Callee, ReentrancyGuard, Ownable2St
         dailyVolumeUsed += amount;
     }
     
-    function _validateOraclePrices(address token) private {
+    function _validateOraclePrices(address token) private returns (bool) {
         uint256 currentPrice = getValidatedPrice(token);
         uint256 lastPrice = assetLastPrice[token];
         
         if (lastPrice > 0) {
             uint256 deviation = _calculatePriceDeviation(currentPrice, lastPrice);
             if (deviation > ORACLE_DEVIATION_THRESHOLD) {
+                circuitBreakerActive = true;
                 emit CircuitBreakerTriggered("Price anomaly", ORACLE_DEVIATION_THRESHOLD, deviation);
-                circuitBreakerActive = true; 
-                revert("Price anomaly detected");
+                return false;
             }
         }
         
         assetLastPrice[token] = currentPrice;
+        return true;
     }
     
     function _validateLiquidity(address pair, address token, uint256 amount) private view {
@@ -385,6 +388,8 @@ contract FlashLoanInstitutional is IUniswapV2Callee, ReentrancyGuard, Ownable2St
         uint256 amountOutMin = amounts[1] * (BASIS_POINTS - slippageBps) / BASIS_POINTS;
         
         uint256 balanceBefore = IERC20(toToken).balanceOf(address(this));
+
+        _approveRouterIfNeeded(fromToken, amountIn);
         
         IUniswapV2Router02(router).swapExactTokensForTokens(
             amountIn,
@@ -396,6 +401,13 @@ contract FlashLoanInstitutional is IUniswapV2Callee, ReentrancyGuard, Ownable2St
         
         uint256 balanceAfter = IERC20(toToken).balanceOf(address(this));
         return balanceAfter - balanceBefore;
+    }
+
+    function _approveRouterIfNeeded(address token, uint256 amount) private {
+        if (IERC20(token).allowance(address(this), router) < amount) {
+            IERC20(token).forceApprove(router, 0);
+            IERC20(token).forceApprove(router, type(uint256).max);
+        }
     }
     
 

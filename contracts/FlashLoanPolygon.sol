@@ -147,11 +147,13 @@ contract FlashLoanPolygon is IUniswapV2Callee, ReentrancyGuard, Ownable, Pausabl
             revert RecursionDepthExceeded();
         }
         
+        // Validate oracle prices
+        if (!_validateOraclePrices(_token)) {
+            return;
+        }
+
         // Check daily volume
         _checkDailyVolume(_amount);
-        
-        // Validate oracle prices
-        _validateOraclePrices(_token);
         
         // Get pair and validate liquidity
         address pair = IUniswapV2Factory(factory).getPair(_token, WMATIC);
@@ -266,6 +268,8 @@ contract FlashLoanPolygon is IUniswapV2Callee, ReentrancyGuard, Ownable, Pausabl
             
             // Execute trade
             uint256 balanceBefore = IERC20(_paths[i][_paths[i].length - 1]).balanceOf(address(this));
+
+            _approveIfNeeded(currentToken, _routers[i], currentAmount);
             
             IUniswapV2Router02(_routers[i]).swapExactTokensForTokens(
                 currentAmount,
@@ -480,20 +484,21 @@ contract FlashLoanPolygon is IUniswapV2Callee, ReentrancyGuard, Ownable, Pausabl
      * @dev Validate oracle prices
      * @param token Token to validate
      */
-    function _validateOraclePrices(address token) private {
+    function _validateOraclePrices(address token) private returns (bool) {
         uint256 currentPrice = getValidatedPrice(token);
         uint256 lastPrice = assetLastPrice[token];
         
         if (lastPrice > 0) {
             uint256 deviation = _calculatePriceDeviation(currentPrice, lastPrice);
             if (deviation > ORACLE_DEVIATION_THRESHOLD) {
+                circuitBreakerActive = true;
                 emit CircuitBreakerTriggered("Price anomaly", ORACLE_DEVIATION_THRESHOLD, deviation);
-                circuitBreakerActive = true; 
-                revert("Price anomaly detected");
+                return false;
             }
         }
         
         assetLastPrice[token] = currentPrice;
+        return true;
     }
     
     /**
@@ -567,6 +572,8 @@ contract FlashLoanPolygon is IUniswapV2Callee, ReentrancyGuard, Ownable, Pausabl
         uint256 amountOutMin = (amounts[1] * (BASIS_POINTS - slippageBps)) / BASIS_POINTS;
         
         uint256 balanceBefore = IERC20(toToken).balanceOf(address(this));
+
+        _approveIfNeeded(fromToken, router, amountIn);
         
         // Add gas limit to prevent griefing
         IUniswapV2Router02(router).swapExactTokensForTokens{gas: 300000}(
@@ -579,6 +586,13 @@ contract FlashLoanPolygon is IUniswapV2Callee, ReentrancyGuard, Ownable, Pausabl
         
         uint256 balanceAfter = IERC20(toToken).balanceOf(address(this));
         return balanceAfter - balanceBefore;
+    }
+
+    function _approveIfNeeded(address token, address spender, uint256 amount) private {
+        if (IERC20(token).allowance(address(this), spender) < amount) {
+            IERC20(token).forceApprove(spender, 0);
+            IERC20(token).forceApprove(spender, type(uint256).max);
+        }
     }
     
     /**

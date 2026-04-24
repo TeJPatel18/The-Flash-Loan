@@ -32,9 +32,10 @@ async function main() {
     FEE_RECIPIENT
   );
 
-  await flashLoan.deployed();
+  await flashLoan.waitForDeployment();
+  const contractAddress = await flashLoan.getAddress();
 
-  console.log("FlashLoanInstitutional deployed to:", flashLoan.address);
+  console.log("FlashLoanInstitutional deployed to:", contractAddress);
   console.log("Deployment completed successfully!");
   
   // Verify deployment
@@ -45,7 +46,7 @@ async function main() {
   console.log("WBNB:", await flashLoan.WBNB());
   console.log("CROX:", await flashLoan.CROX());
   console.log("CAKE:", await flashLoan.CAKE());
-  console.log("Chainlink Oracle:", await flashLoan.chainlinkOracle());
+  console.log("Chainlink Oracle:", await flashLoan.tokenOracles(BUSD));
   console.log("Fee Recipient:", await flashLoan.feeRecipient());
   console.log("Owner:", await flashLoan.owner());
   
@@ -53,14 +54,14 @@ async function main() {
   console.log("\n=== Initial State ===");
   console.log("Protocol Fee (bps):", await flashLoan.protocolFeeBps());
   console.log("Circuit Breaker Active:", await flashLoan.circuitBreakerActive());
-  console.log("Daily Volume Used:", ethers.utils.formatEther(await flashLoan.dailyVolumeUsed()));
-  console.log("Insurance Reserve Balance:", ethers.utils.formatEther(await flashLoan.insuranceReserveBalance()));
+  console.log("Daily Volume Used:", ethers.formatEther(await flashLoan.dailyVolumeUsed()));
+  console.log("Insurance Reserve Balance:", ethers.formatEther(await flashLoan.insuranceReserveBalance()));
   
   // Check risk configs
   console.log("\n=== Risk Configurations ===");
   const busdConfig = await flashLoan.getAssetRiskConfig(BUSD);
   console.log("BUSD Config:", {
-    maxLoanAmount: ethers.utils.formatEther(busdConfig.maxLoanAmount),
+    maxLoanAmount: ethers.formatEther(busdConfig.maxLoanAmount),
     ltvRatio: busdConfig.ltvRatio.toString(),
     riskScore: busdConfig.riskScore.toString(),
     isActive: busdConfig.isActive
@@ -68,7 +69,7 @@ async function main() {
   
   const croxConfig = await flashLoan.getAssetRiskConfig(CROX);
   console.log("CROX Config:", {
-    maxLoanAmount: ethers.utils.formatEther(croxConfig.maxLoanAmount),
+    maxLoanAmount: ethers.formatEther(croxConfig.maxLoanAmount),
     ltvRatio: croxConfig.ltvRatio.toString(),
     riskScore: croxConfig.riskScore.toString(),
     isActive: croxConfig.isActive
@@ -76,7 +77,7 @@ async function main() {
   
   const cakeConfig = await flashLoan.getAssetRiskConfig(CAKE);
   console.log("CAKE Config:", {
-    maxLoanAmount: ethers.utils.formatEther(cakeConfig.maxLoanAmount),
+    maxLoanAmount: ethers.formatEther(cakeConfig.maxLoanAmount),
     ltvRatio: cakeConfig.ltvRatio.toString(),
     riskScore: cakeConfig.riskScore.toString(),
     isActive: cakeConfig.isActive

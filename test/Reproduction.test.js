@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const { parseEther } = ethers;
+const { parseEther, parseUnits } = ethers;
 
 describe("Vulnerability Reproduction", function () {
     let owner, user, feeRecipient;
@@ -115,6 +115,116 @@ describe("Vulnerability Reproduction", function () {
 
             // The owner should be the deployer (owner signer), NOT feeRecipient
             expect(await flashLoan.owner()).to.equal(owner.address);
+        });
+    });
+
+    describe("CRITICAL-4: Router approvals and oracle circuit breaker", function () {
+        it("FlashLoanInstitutional should approve router tokens during swaps", async function () {
+            const FlashLoanInstitutional = await ethers.getContractFactory("FlashLoanInstitutional");
+            const MockOracle = await ethers.getContractFactory("MockOracle");
+            const mockOracle = await MockOracle.deploy();
+            await mockOracle.setPrice(parseUnits("1", 8));
+
+            const flashLoan = await FlashLoanInstitutional.deploy(
+                mockFactory.target,
+                mockRouter.target,
+                BUSD.target,
+                WBNB.target,
+                CROX.target,
+                CAKE.target,
+                mockOracle.target,
+                feeRecipient.address
+            );
+
+            await flashLoan.connect(user).initiateFlashLoan(BUSD.target, parseEther("100"), 500);
+
+            expect(await BUSD.allowance(flashLoan.target, mockRouter.target)).to.equal(ethers.MaxUint256);
+            expect(await CROX.allowance(flashLoan.target, mockRouter.target)).to.equal(ethers.MaxUint256);
+            expect(await CAKE.allowance(flashLoan.target, mockRouter.target)).to.equal(ethers.MaxUint256);
+        });
+
+        it("FlashLoanPolygon should approve router tokens during swaps", async function () {
+            const FlashLoanPolygon = await ethers.getContractFactory("FlashLoanPolygon");
+            const MockOracle = await ethers.getContractFactory("MockOracle");
+            const mockOracle = await MockOracle.deploy();
+            await mockOracle.setPrice(parseUnits("1", 8));
+
+            const flashLoan = await FlashLoanPolygon.deploy(
+                mockFactory.target,
+                mockRouter.target,
+                BUSD.target,
+                WBNB.target,
+                CROX.target,
+                CAKE.target,
+                mockOracle.target,
+                feeRecipient.address
+            );
+
+            await flashLoan.connect(user).initiateFlashLoan(BUSD.target, parseUnits("1000", 6), 500);
+
+            expect(await BUSD.allowance(flashLoan.target, mockRouter.target)).to.equal(ethers.MaxUint256);
+            expect(await CROX.allowance(flashLoan.target, mockRouter.target)).to.equal(ethers.MaxUint256);
+            expect(await CAKE.allowance(flashLoan.target, mockRouter.target)).to.equal(ethers.MaxUint256);
+        });
+
+        it("FlashLoanInstitutional should latch circuit breaker on oracle anomaly", async function () {
+            const FlashLoanInstitutional = await ethers.getContractFactory("FlashLoanInstitutional");
+            const MockOracle = await ethers.getContractFactory("MockOracle");
+            const mockOracle = await MockOracle.deploy();
+            await mockOracle.setPrice(parseUnits("1", 8));
+
+            const flashLoan = await FlashLoanInstitutional.deploy(
+                mockFactory.target,
+                mockRouter.target,
+                BUSD.target,
+                WBNB.target,
+                CROX.target,
+                CAKE.target,
+                mockOracle.target,
+                feeRecipient.address
+            );
+
+            await flashLoan.connect(user).initiateFlashLoan(BUSD.target, parseEther("100"), 500);
+
+            await mockOracle.setPrice(parseUnits("2", 8));
+            await expect(
+                flashLoan.connect(user).initiateFlashLoan(BUSD.target, parseEther("100"), 500)
+            ).to.emit(flashLoan, "CircuitBreakerTriggered");
+
+            expect(await flashLoan.circuitBreakerActive()).to.equal(true);
+            await expect(
+                flashLoan.connect(user).initiateFlashLoan(BUSD.target, parseEther("100"), 500)
+            ).to.be.revertedWithCustomError(flashLoan, "CircuitBreakerActive");
+        });
+
+        it("FlashLoanPolygon should latch circuit breaker on oracle anomaly", async function () {
+            const FlashLoanPolygon = await ethers.getContractFactory("FlashLoanPolygon");
+            const MockOracle = await ethers.getContractFactory("MockOracle");
+            const mockOracle = await MockOracle.deploy();
+            await mockOracle.setPrice(parseUnits("1", 8));
+
+            const flashLoan = await FlashLoanPolygon.deploy(
+                mockFactory.target,
+                mockRouter.target,
+                BUSD.target,
+                WBNB.target,
+                CROX.target,
+                CAKE.target,
+                mockOracle.target,
+                feeRecipient.address
+            );
+
+            await flashLoan.connect(user).initiateFlashLoan(BUSD.target, parseUnits("1000", 6), 500);
+
+            await mockOracle.setPrice(parseUnits("2", 8));
+            await expect(
+                flashLoan.connect(user).initiateFlashLoan(BUSD.target, parseUnits("1000", 6), 500)
+            ).to.emit(flashLoan, "CircuitBreakerTriggered");
+
+            expect(await flashLoan.circuitBreakerActive()).to.equal(true);
+            await expect(
+                flashLoan.connect(user).initiateFlashLoan(BUSD.target, parseUnits("1000", 6), 500)
+            ).to.be.revertedWithCustomError(flashLoan, "CircuitBreakerActive");
         });
     });
 });

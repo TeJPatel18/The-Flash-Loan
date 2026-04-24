@@ -54,7 +54,7 @@ graph TD
 2. **PriceOraclePolygon.sol**: Price oracle for multi-DEX price feeds
 3. **MockOracle.sol**: Mock Chainlink oracle for testing
 4. **Arbitrage Bot**: JavaScript/TypeScript implementation for monitoring and execution
-5. **Deployment Scripts**: Scripts for Mumbai testnet and Polygon mainnet
+5. **Deployment Scripts**: Scripts for Polygon mainnet and supported testnet configuration
 
 ## Smart Contracts
 
@@ -79,7 +79,7 @@ Price oracle contract that provides pricing information from multiple DEXs:
 
 ### MockOracle.sol
 
-Mock Chainlink oracle for testing purposes on Mumbai testnet.
+Mock Chainlink oracle for local and testnet simulations.
 
 ## Bot Implementation
 
@@ -146,13 +146,6 @@ REPORT_GAS=true npx hardhat test
 
 ## Deployment
 
-### Mumbai Testnet
-
-```bash
-# Deploy to Mumbai testnet
-npx hardhat run scripts/deploy-polygon-mumbai.js --network mumbai
-```
-
 ### Polygon Mainnet
 
 ```bash
@@ -196,9 +189,9 @@ The project is configured to work with the following networks:
    - Chain ID: 137
    - RPC URL: https://polygon-rpc.com/
 
-2. **Mumbai Testnet**
-   - Chain ID: 80001
-   - RPC URL: https://rpc-mumbai.maticvigil.com/
+2. **Polygon Amoy Testnet**
+   - Chain ID: 80002
+   - RPC URL: https://rpc-amoy.polygon.technology/
 
 ## Usage
 
@@ -211,9 +204,6 @@ npx hardhat compile
 ### 2. Deploy Contracts
 
 ```bash
-# For Mumbai testnet
-npx hardhat run scripts/deploy-polygon-mumbai.js --network mumbai
-
 # For Polygon mainnet
 npx hardhat run scripts/deploy-polygon.js --network polygon
 ```

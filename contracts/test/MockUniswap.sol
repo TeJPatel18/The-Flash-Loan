@@ -92,6 +92,8 @@ contract MockUniswapV2Router {
             }
         }
 
+        MockERC20(path[0]).transferFrom(msg.sender, address(this), amountIn);
+
         // Mint the final output to the recipient
         address tokenOut = path[path.length - 1];
         MockERC20(tokenOut).mint(to, amounts[amounts.length - 1]);

@@ -9,7 +9,6 @@
     "deploy": "hardhat run scripts/deploy-institutional.js",
     "deploy:testnet": "hardhat run scripts/deploy-institutional.js --network bscTestnet",
     "deploy:mainnet": "hardhat run scripts/deploy-institutional.js --network bsc",
-    "deploy:mumbai": "hardhat run scripts/deploy-polygon-mumbai.js --network mumbai",
     "deploy:polygon": "hardhat run scripts/deploy-polygon.js --network polygon",
     "deploy:liquidation:polygon": "hardhat run scripts/deploy-liquidation.js --network polygon",
     "bot:liquidation": "npm --prefix bot run start:liquidation",
